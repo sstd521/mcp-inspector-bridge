@@ -30,6 +30,7 @@ exports.NodeTree = {
                          :class="[
                             { 
                                 active: node.id === selectedId, 
+                                flashed: node.id === flashedId,
                                 inactive: !node.activeInHierarchy 
                             },
                             getPrefabClass(node)
@@ -61,6 +62,8 @@ exports.NodeTree = {
     setup(props, { emit }) {
         const searchQuery = ref('');
         const selectedId = ref('');
+        const flashedId = ref('');
+        let flashTimer = null;
         // 保存节点的展开状态 id -> boolean
         const expandedState = ref({});
         // 打平层级树结构为一维数组，便于执行虚拟列表渲染和搜索过滤
@@ -266,6 +269,39 @@ exports.NodeTree = {
             }
             return false;
         };
+        const flashNode = (targetId) => {
+            let path = null;
+            const findPath = (node, currentPath) => {
+                if (!node)
+                    return false;
+                if (node.id === targetId) {
+                    path = currentPath;
+                    return true;
+                }
+                const nextPath = [...currentPath, node.id];
+                for (const child of node.children || []) {
+                    if (findPath(child, nextPath))
+                        return true;
+                }
+                return false;
+            };
+            const roots = props.treeData && props.treeData.id
+                ? [props.treeData]
+                : ((props.treeData && props.treeData.children) || []);
+            if (!roots.some((root) => findPath(root, [])) || !path)
+                return false;
+            path.forEach((id) => { expandedState.value[id] = true; });
+            if (flashTimer)
+                clearTimeout(flashTimer);
+            flashedId.value = targetId;
+            setTimeout(() => {
+                const el = document.querySelector('.tree-node.flashed');
+                if (el)
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 50);
+            flashTimer = setTimeout(() => { flashedId.value = ''; }, 700);
+            return true;
+        };
         const clearSearch = () => {
             searchQuery.value = '';
         };
@@ -305,6 +341,7 @@ exports.NodeTree = {
         return {
             searchQuery,
             selectedId,
+            flashedId,
             visibleNodes,
             toggleExpand,
             selectNode,
@@ -313,6 +350,7 @@ exports.NodeTree = {
             getIcon,
             getPrefabClass,
             expandToNode,
+            flashNode,
             hoverNode,
             clearHover,
             onContainerClick

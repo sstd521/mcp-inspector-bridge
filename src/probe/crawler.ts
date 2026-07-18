@@ -86,26 +86,28 @@ export function initCrawler() {
             try { isActive = node.active !== false; } catch(e) {}
 
             let prefabUuid = null;
+            let prefabChildIndexPath = null;
             try {
                 if (node._prefab) {
-                    if (node._prefab.asset) {
-                        prefabUuid = node._prefab.asset._uuid || node._prefab.asset.uuid || node._prefab.asset.id;
+                    const prefabRoot = node._prefab.root || node;
+                    const prefabAsset = prefabRoot._prefab && prefabRoot._prefab.asset;
+                    if (prefabAsset) {
+                        prefabUuid = prefabAsset._uuid || prefabAsset.uuid || prefabAsset.id;
                     }
-                    if (!prefabUuid && node._prefab.fileId) {
-                        prefabUuid = node._prefab.fileId;
-                    }
-                    if (!prefabUuid && node._prefab._prefab) {
-                        prefabUuid = node._prefab._prefab._uuid || node._prefab._prefab.uuid;
-                    }
-                    if (!prefabUuid) {
-                        var cur = node;
-                        while (cur) {
-                            if (cur._prefab && cur._prefab.root === cur && cur._prefab.asset) {
-                                prefabUuid = cur._prefab.asset._uuid || cur._prefab.asset.uuid || cur._prefab.asset.id;
+                    if (prefabUuid) {
+                        prefabChildIndexPath = [];
+                        let current = node;
+                        while (current && current !== prefabRoot) {
+                            const parent = current.parent;
+                            const childIndex = parent && parent.children ? parent.children.indexOf(current) : -1;
+                            if (childIndex < 0) {
+                                prefabChildIndexPath = null;
                                 break;
                             }
-                            cur = cur.parent;
+                            prefabChildIndexPath.push(childIndex);
+                            current = parent;
                         }
+                        if (prefabChildIndexPath) prefabChildIndexPath.reverse();
                     }
                 }
             } catch (e) {}
@@ -124,6 +126,7 @@ export function initCrawler() {
                 name: node.name,
                 isScene: false,
                 prefabUuid: prefabUuid,
+                prefabChildIndexPath: prefabChildIndexPath,
                 active: isActive,
                 x: node.x !== undefined ? node.x : 0,
                 y: node.y !== undefined ? node.y : 0,
@@ -317,16 +320,141 @@ export function initCrawler() {
                             scriptUuid = classId;
                         }
                     }
+                    const buttonClickEvents = window.cc && window.cc.Button && comp instanceof window.cc.Button
+                        ? this.getButtonClickEventDetails(comp)
+                        : null;
                     detail.components.push({
                         name: cname,
                         realIndex: i,
                         enabled: comp.enabled !== false,
                         scriptUuid: scriptUuid,
+                        buttonClickEvents: buttonClickEvents,
                         properties: props,
                     });
                 }
             }
             return detail;
+        },
+        getButtonClickEvents: function (button) {
+            if (!button) return [];
+            if (Array.isArray(button.clickEvents)) return button.clickEvents;
+            if (Array.isArray(button._clickEvents)) return button._clickEvents;
+            return [];
+        },
+        resolveButtonClickEvent: function (clickEvent, index) {
+            const empty = {
+                index: index,
+                targetName: 'null',
+                targetUuid: '',
+                componentName: '',
+                componentId: '',
+                scriptComponentName: '',
+                handlerName: '',
+                customEventData: '',
+                hasHandler: false,
+            };
+            if (!clickEvent) return empty;
+
+            const eng = window.cc || {};
+            const target = clickEvent.target;
+            const componentName = clickEvent.component || '';
+            const componentId = clickEvent._componentId || '';
+            const handlerName = String(clickEvent.handler || '').trim();
+            let scriptComponent = null;
+            if (target && target.getComponent) {
+                try { if (componentName) scriptComponent = target.getComponent(componentName); } catch (e) {}
+                if (!scriptComponent && componentId && eng.js && eng.js._getClassById) {
+                    try {
+                        const componentClass = eng.js._getClassById(componentId);
+                        if (componentClass) scriptComponent = target.getComponent(componentClass);
+                    } catch (e) {}
+                }
+            }
+
+            let scriptComponentName = componentName;
+            if (scriptComponent) {
+                try {
+                    scriptComponentName = eng.js && eng.js.getClassName
+                        ? eng.js.getClassName(scriptComponent)
+                        : (scriptComponent.__classname__ || scriptComponent.name || componentName);
+                } catch (e) {}
+            }
+
+            return {
+                index: index,
+                targetName: target ? (target.name || 'target') : 'null',
+                targetUuid: target ? (target.uuid || target.id || '') : '',
+                componentName: componentName,
+                componentId: componentId,
+                scriptComponentName: scriptComponentName,
+                handlerName: handlerName,
+                customEventData: clickEvent.customEventData || clickEvent._customEventData || '',
+                hasHandler: !!(scriptComponent && handlerName && typeof scriptComponent[handlerName] === 'function'),
+            };
+        },
+        getButtonClickEventDetails: function (button) {
+            return this.getButtonClickEvents(button).map((event, index) => this.resolveButtonClickEvent(event, index));
+        },
+        getComponentByIndex: function (nodeUuid, compIndex) {
+            const node = this.findNodeByUuid(nodeUuid);
+            return node && node._components && compIndex >= 0 && compIndex < node._components.length
+                ? node._components[compIndex]
+                : null;
+        },
+        prepareButtonClickHandlerInspect: function (nodeUuid, compIndex, eventIndex) {
+            const button = this.getComponentByIndex(nodeUuid, compIndex);
+            const clickEvent = this.getButtonClickEvents(button)[eventIndex];
+            const detail = this.resolveButtonClickEvent(clickEvent, eventIndex);
+            if (!detail.hasHandler || !clickEvent.target) return false;
+            let component = null;
+            try { if (detail.componentName) component = clickEvent.target.getComponent(detail.componentName); } catch (e) {}
+            if (!component && detail.componentId && window.cc && window.cc.js && window.cc.js._getClassById) {
+                try {
+                    const componentClass = window.cc.js._getClassById(detail.componentId);
+                    if (componentClass) component = clickEvent.target.getComponent(componentClass);
+                } catch (e) {}
+            }
+            window.__mcpButtonClickHandler = component && component[detail.handlerName];
+            return typeof window.__mcpButtonClickHandler === 'function';
+        },
+        triggerButtonClickHandler: function (nodeUuid, compIndex, eventIndex) {
+            const button = this.getComponentByIndex(nodeUuid, compIndex);
+            const clickEvent = this.getButtonClickEvents(button)[eventIndex];
+            const detail = this.resolveButtonClickEvent(clickEvent, eventIndex);
+            if (!button || !detail.hasHandler) return false;
+            try {
+                const EventHandler = window.cc && window.cc.Component && window.cc.Component.EventHandler;
+                if (EventHandler && typeof EventHandler.emitEvents === 'function') {
+                    EventHandler.emitEvents([clickEvent], button);
+                } else {
+                    const component = clickEvent.target.getComponent(detail.componentName);
+                    component[detail.handlerName].call(component, button, detail.customEventData);
+                }
+                return true;
+            } catch (error) {
+                console.error('[MCP Crawler] failed to trigger button click handler', error);
+                return false;
+            }
+        },
+        simulateButtonClick: function (nodeUuid, compIndex) {
+            const button = this.getComponentByIndex(nodeUuid, compIndex);
+            if (!button || !window.cc || !window.cc.Button || !(button instanceof window.cc.Button)) return false;
+            if (!button.enabledInHierarchy || !button.interactable || !button.node || !button.node.activeInHierarchy) return false;
+            try {
+                if (typeof button._emitClickEvents === 'function') {
+                    button._emitClickEvents();
+                } else {
+                    const EventHandler = window.cc.Component && window.cc.Component.EventHandler;
+                    if (EventHandler && typeof EventHandler.emitEvents === 'function') {
+                        EventHandler.emitEvents(this.getButtonClickEvents(button), button);
+                    }
+                }
+                if (button.node && typeof button.node.emit === 'function') button.node.emit('click', button);
+                return true;
+            } catch (error) {
+                console.error('[MCP Crawler] failed to simulate button click', error);
+                return false;
+            }
         },
         updateNodeProperty: function (uuid, compName, propKey, value, compIndex, arrayIndex) {
             const node = this.findNodeByUuid(uuid);

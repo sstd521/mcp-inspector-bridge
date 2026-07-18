@@ -1,7 +1,60 @@
 const { nextTick, onUnmounted } = require('vue');
 declare const Editor: any;
 
-export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any, activeTab: any) {
+export function normalizeEditorUuid(uuid: unknown): string {
+    if (typeof uuid !== 'string' || !uuid) return '';
+    if (uuid.length !== 22 && uuid.length !== 23) return uuid;
+    try {
+        return Editor.Utils.UuidUtils.decompressUuid(uuid);
+    } catch (_) {
+        return uuid;
+    }
+}
+
+export function toSerializableNodeDetail(detail: any) {
+    const rawPath = detail && Array.isArray(detail.prefabChildIndexPath)
+        ? detail.prefabChildIndexPath
+        : [];
+    return {
+        id: detail && detail.id ? String(detail.id) : '',
+        prefabUuid: detail && detail.prefabUuid ? String(detail.prefabUuid) : '',
+        // Vue 的 reactive Array 是 Proxy，Electron 7 IPC 无法 structured-clone。
+        prefabChildIndexPath: Array.from(rawPath, (index: any) => Number(index)),
+    };
+}
+
+export function locateEditorAsset(uuid: string): boolean {
+    const targetUuid = normalizeEditorUuid(uuid);
+    if (!targetUuid || typeof Editor === 'undefined' || !Editor.Ipc) return false;
+    Editor.Ipc.sendToAll('assets:clearSearch');
+    Editor.Ipc.sendToAll('assets:hint', targetUuid);
+    if (Editor.Selection && Editor.Selection.select) {
+        Editor.Selection.select('asset', targetUuid);
+    }
+    return true;
+}
+
+export function openEditorScript(uuid: string): boolean {
+    const targetUuid = normalizeEditorUuid(uuid);
+    if (!targetUuid || typeof Editor === 'undefined' || !Editor.Ipc) return false;
+    Editor.Ipc.sendToMain('assets:open-text-file', targetUuid);
+    return true;
+}
+
+export function openEditorUuidLookup(uuid: string): boolean {
+    const targetUuid = normalizeEditorUuid(uuid);
+    if (!targetUuid || typeof Editor === 'undefined' || !Editor.Ipc) return false;
+    let delay = 2000;
+    try {
+        if (Editor.Panel && Editor.Panel.findWindow && Editor.Panel.findWindow('uuid_lookup')) delay = 0;
+    } catch (_) {}
+    Editor.Ipc.sendToMain('uuid_lookup:open-panel');
+    // uuidLookup 首次创建面板约需 2 秒；过早发送查询会被直接丢弃。
+    setTimeout(() => Editor.Ipc.sendToAll('uuid-lookup:query', targetUuid), delay);
+    return true;
+}
+
+export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any, activeTab: any, devToolsSystem: any) {
     
     const syncNodeDetail = (oldObj: any, newObj: any) => {
         if (!oldObj || oldObj.id !== newObj.id) return newObj;
@@ -14,6 +67,9 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
                 const nComp = newObj.components[i];
                 oComp.enabled = nComp.enabled;
                 oComp.name = nComp.name;
+                oComp.realIndex = nComp.realIndex;
+                oComp.scriptUuid = nComp.scriptUuid;
+                oComp.buttonClickEvents = nComp.buttonClickEvents;
                 if (oComp.properties && nComp.properties) {
                     const pMap: Record<string, any> = {};
                     oComp.properties.forEach((p: any) => pMap[p.key] = p);
@@ -259,46 +315,90 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
         }
     };
 
-    let locateAssetTimeout: any = null;
+    const queryScriptAssetInfo = (scriptUuid: string): Promise<any> => new Promise((resolve) => {
+        if (!scriptUuid || typeof Editor === 'undefined' || !Editor.Ipc) return resolve(null);
+        let settled = false;
+        const finish = (info: any) => {
+            if (settled) return;
+            settled = true;
+            resolve(info || null);
+        };
+        const timer = setTimeout(() => finish(null), 500);
+        try {
+            Editor.Ipc.sendToMain('mcp-inspector-bridge:query-script-asset-info', scriptUuid, (_err: any, info: any) => {
+                clearTimeout(timer);
+                finish(info);
+            });
+        } catch (_) {
+            clearTimeout(timer);
+            finish(null);
+        }
+    });
+
+    const onOpenComponentScript = (component: any) => {
+        if (component && component.scriptUuid) openEditorScript(component.scriptUuid);
+    };
+
+    const onOpenComponentSource = async (component: any) => {
+        if (!component || !component.scriptUuid) return;
+        const info = await queryScriptAssetInfo(component.scriptUuid);
+        const fileName = info && info.fileName ? info.fileName : component.name;
+        await devToolsSystem.openSource(fileName);
+    };
+
+    const onLocateEditorNode = (detail: any) => {
+        if (detail && typeof Editor !== 'undefined') {
+            Editor.Ipc.sendToMain('mcp-inspector-bridge:locate-editor-node', toSerializableNodeDetail(detail));
+        }
+    };
+
+    const onQueryUuidUsage = (uuid: string) => {
+        openEditorUuidLookup(uuid);
+    };
+
+    const onButtonAction = async (action: string, component: any, eventInfo: any) => {
+        if (!component || !globalState.nodeDetail) return;
+        if (action === 'locate-target') {
+            activeTab.value = 0;
+            await nextTick();
+            const ok = nodeTreeRef.value && (nodeTreeRef.value as any).flashNode(eventInfo.targetUuid);
+            if (!ok && typeof Editor !== 'undefined') Editor.warn('[Bridge] Button Target 不在当前节点树中');
+            return;
+        }
+        if (action === 'open-script') {
+            if (eventInfo && eventInfo.componentId) openEditorScript(eventInfo.componentId);
+            return;
+        }
+
+        const wv: any = gameView.value;
+        if (!isWebViewReady(wv)) return;
+        if (action === 'open-handler') {
+            const info = await queryScriptAssetInfo(eventInfo.componentId);
+            const fileName = info && info.fileName
+                ? info.fileName
+                : (eventInfo.scriptComponentName || eventInfo.componentName || '');
+            await devToolsSystem.inspectButtonHandler(
+                globalState.nodeDetail.id,
+                component.realIndex,
+                eventInfo.index,
+                fileName,
+                eventInfo.handlerName,
+            );
+            return;
+        }
+
+        const method = action === 'simulate' ? 'simulateButtonClick' : 'triggerButtonClickHandler';
+        const args = action === 'simulate'
+            ? `${JSON.stringify(globalState.nodeDetail.id)}, ${component.realIndex}`
+            : `${JSON.stringify(globalState.nodeDetail.id)}, ${component.realIndex}, ${eventInfo.index}`;
+        const success = await wv.executeJavaScript(`window.__mcpCrawler && window.__mcpCrawler.${method}(${args})`);
+        if (!success && typeof Editor !== 'undefined') Editor.warn(`[Bridge] Button 操作失败: ${action}`);
+    };
+
     const onLocateAsset = (uuid: string) => {
-        if (!uuid) return;
-        if (locateAssetTimeout) clearTimeout(locateAssetTimeout);
-        locateAssetTimeout = setTimeout(() => {
-            try {
-                let targetUuid = uuid;
-                if (uuid.length === 22 || uuid.length === 23) {
-                    if (typeof Editor !== 'undefined' && Editor.Utils && Editor.Utils.UuidUtils && Editor.Utils.UuidUtils.decompressUuid) {
-                        try {
-                            targetUuid = Editor.Utils.UuidUtils.decompressUuid(uuid);
-                        } catch (err) {}
-                    } else {
-                        // Fallback pure JS decompression if Editor.Utils is unavailable in this context
-                        try {
-                            const BASE64_KEYS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
-                            const values = new Array(123);
-                            for (let i = 0; i < 123; ++i) values[i] = 0;
-                            for (let i = 0; i < 64; ++i) values[BASE64_KEYS.charCodeAt(i)] = i;
-                            const HexChars = '0123456789abcdef'.split('');
-                            let str = uuid;
-                            let hexChars = [];
-                            let start = str.length === 23 ? 5 : 2;
-                            for (let i = start; i < str.length; i += 2) {
-                                let lhs = values[str.charCodeAt(i)];
-                                let rhs = values[str.charCodeAt(i + 1)];
-                                hexChars.push(HexChars[lhs >> 2]);
-                                hexChars.push(HexChars[((lhs & 3) << 2) | Math.floor(rhs / 16)]);
-                                hexChars.push(HexChars[rhs & 0xF]);
-                            }
-                            str = str.slice(0, start) + hexChars.join('');
-                            targetUuid = str.slice(0, 8) + '-' + str.slice(8, 12) + '-' + str.slice(12, 16) + '-' + str.slice(16, 20) + '-' + str.slice(20);
-                        } catch (err) {}
-                    }
-                }
-                if (typeof Editor !== 'undefined' && Editor.Ipc) Editor.Ipc.sendToAll('assets:hint', targetUuid);
-            } catch (e: any) {
-                console.warn(`[Bridge] IPC 发送失败: ${e.message}`);
-            }
-        }, 300);
+        if (!locateEditorAsset(uuid) && typeof Editor !== 'undefined') {
+            Editor.warn('[Bridge] 无法在资源管理器中定位资源');
+        }
     };
 
     const onPrintComp = (uuid: string, compIndex: number) => {
@@ -375,6 +475,11 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
         locateResource,
         onLocateNode,
         onLocateAsset,
+        onLocateEditorNode,
+        onQueryUuidUsage,
+        onOpenComponentScript,
+        onOpenComponentSource,
+        onButtonAction,
         onPrintComp,
         onPrintNode
     };

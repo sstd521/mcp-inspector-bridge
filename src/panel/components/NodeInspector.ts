@@ -14,6 +14,11 @@ export const NodeInspector = {
     "focus-change",
     "locate-node",
     "locate-asset",
+    "query-uuid-usage",
+    "locate-editor-node",
+    "open-component-script",
+    "open-component-source",
+    "button-action",
     "print-comp",
     "print-node",
   ],
@@ -43,8 +48,10 @@ export const NodeInspector = {
                             <div style="flex: 1; min-width: 0; margin-left: 8px; margin-right: 8px; display: flex; align-items: center;">
                                 <input type="text" :value="nodeDetail.name" @change="onUpdateProp(null, 'name', $event.target.value)" style="width: 100%; box-sizing: border-box; padding: 2px 4px; background: var(--bg-input); color: var(--text-main); border: 1px solid transparent; border-radius: var(--radius); min-width: 0; outline: none; transition: border-color 0.2s;" onfocus="this.style.borderColor='var(--accent-blue)'" onblur="this.style.borderColor='transparent'" />
                                 <span v-if="nodeDetail.prefabUuid" @click.stop="$emit('locate-asset', nodeDetail.prefabUuid)" style="cursor: pointer; font-size: 14px; margin-left: 8px; color: var(--accent-blue); filter: drop-shadow(0 0 4px var(--accent-blue));" title="在资源管理器中定位预制体">🎯</span>
+                                <span v-if="nodeDetail.prefabUuid" @click.stop="$emit('query-uuid-usage', nodeDetail.prefabUuid)" style="cursor: pointer; font-size: 13px; margin-left: 5px;" title="在 uuidLookup 中查询预制体使用情况">🔎</span>
                             </div>
                             <div class="header-right">
+                                <span @click.stop="$emit('locate-editor-node', nodeDetail)" title="在编辑器场景中定位节点" style="cursor: pointer; margin-right: 6px; color: var(--accent-blue);">📍</span>
                                 <span class="print-btn" @click.stop="onPrintNode" title="在控制台直接打印该节点对象" style="cursor: pointer; margin-right: 6px;">🖨️</span>
                                 <span class="size-tag" style="background: rgba(0,0,0,0.3); border-color: transparent;">Node</span>
                             </div>
@@ -146,6 +153,10 @@ export const NodeInspector = {
                         <input type="checkbox" class="enable-toggle" :checked="comp.enabled" @change="onUpdateProp(comp.name, 'enabled', $event.target.checked, comp.realIndex)" title="启用/禁用当前组件">
                         <span class="component-name" @click="toggleComp(index)" style="cursor: pointer; flex: 1;">{{ comp.name }}</span>
                         <span v-if="comp.scriptUuid" @click.stop="$emit('locate-asset', comp.scriptUuid)" title="在资源管理器中定位组件脚本" style="cursor: pointer; margin-right: 6px; color: var(--accent-blue); filter: drop-shadow(0 0 4px var(--accent-blue));">🎯</span>
+                        <span v-if="comp.scriptUuid" @click.stop="$emit('query-uuid-usage', comp.scriptUuid)" title="在 uuidLookup 中查询组件使用情况" style="cursor: pointer; margin-right: 6px;">🔎</span>
+                        <span v-if="comp.scriptUuid" @click.stop="$emit('open-component-script', comp)" title="用代码编辑器打开脚本" style="cursor: pointer; margin-right: 6px; color: #c792ea;">📂</span>
+                        <span v-if="comp.scriptUuid" @click.stop="$emit('open-component-source', comp)" title="在 DevTools Sources 中打开脚本" style="cursor: pointer; margin-right: 6px; color: #89ddff;">&lt;/&gt;</span>
+                        <span v-if="comp.buttonClickEvents" @click.stop="$emit('button-action', 'simulate', comp, null)" title="模拟点击 Button（触发全部 handler）" style="cursor: pointer; margin-right: 6px; color: #8bc34a;">▶</span>
                         <span class="print-btn" @click.stop="onPrintComponent(nodeDetail.id, comp.realIndex)" title="将当前组件数据打印/导出为JSON">🖨️</span>
                         <div class="header-right" @click="toggleComp(index)" style="cursor: pointer;">
                             <span class="size-tag">属性: {{ comp.properties ? comp.properties.length : 0 }}</span>
@@ -154,6 +165,30 @@ export const NodeInspector = {
                     </div>
                     
                     <div v-show="expandedComps[index]" class="properties-body">
+                        <div v-if="comp.buttonClickEvents" class="button-events">
+                            <div style="display:flex; justify-content:space-between; margin-bottom:4px; color:#bbb;">
+                                <b>Click Events</b><span>{{ comp.buttonClickEvents.length }}</span>
+                            </div>
+                            <div v-if="comp.buttonClickEvents.length === 0" style="color:#666;">未绑定点击事件</div>
+                            <div v-for="eventInfo in comp.buttonClickEvents" :key="eventInfo.index" class="button-event">
+                                <span class="button-event-key">Target</span>
+                                <a v-if="eventInfo.targetUuid" @click.stop="$emit('button-action', 'locate-target', comp, eventInfo)" :title="eventInfo.targetUuid">{{ eventInfo.targetName }}</a>
+                                <span v-else>{{ eventInfo.targetName }}</span>
+                                <span class="button-event-key">Component</span>
+                                <a v-if="eventInfo.componentId" @click.stop="$emit('button-action', 'open-script', comp, eventInfo)">{{ eventInfo.scriptComponentName || eventInfo.componentName || '-' }}</a>
+                                <span v-else>{{ eventInfo.scriptComponentName || eventInfo.componentName || '-' }}</span>
+                                <span class="button-event-key">Handler</span>
+                                <a v-if="eventInfo.hasHandler" @click.stop="$emit('button-action', 'open-handler', comp, eventInfo)">{{ eventInfo.handlerName }}</a>
+                                <span v-else style="color:#ff6666;">{{ eventInfo.handlerName || '-' }}</span>
+                                <span v-if="eventInfo.customEventData" class="button-event-key">Data</span>
+                                <span v-if="eventInfo.customEventData" :title="eventInfo.customEventData">{{ eventInfo.customEventData }}</span>
+                                <div class="button-event-actions">
+                                    <button :disabled="!eventInfo.hasHandler" @click.stop="$emit('button-action', 'trigger-handler', comp, eventInfo)">触发此 Handler</button>
+                                    <button v-if="eventInfo.componentId" @click.stop="$emit('button-action', 'open-script', comp, eventInfo)">打开脚本</button>
+                                    <button :disabled="!eventInfo.hasHandler" @click.stop="$emit('button-action', 'open-handler', comp, eventInfo)">Sources 定位</button>
+                                </div>
+                            </div>
+                        </div>
                         <div v-if="comp.name === 'cc.Widget' || comp.name === 'Widget' || comp.name === 'Widget<cc.Widget>'" style="padding: 0 12px;">
                             <widget-visualizer :comp="comp" @update-prop="(k, v) => onUpdateProp(comp.name, k, v, comp.realIndex)" />
                         </div>
@@ -196,6 +231,7 @@ export const NodeInspector = {
                                             <span style="font-size: 11px; padding: 0 2px;">{{ prop.value.className === 'cc.SpriteFrame' || prop.value.className === 'cc.Texture2D' ? '🖼️' : '🧩' }}</span>
                                             <span class="asset-name" :title="prop.value.uuid">{{ prop.value.name }} <span style="color:#777;font-size:9px;">[{{ prop.value.className }}]</span></span>
                                             <span v-if="prop.value.uuid && prop.value.uuid !== ''" class="target-mark">🎯</span>
+                                            <span v-if="prop.value.uuid" @click.stop="$emit('query-uuid-usage', prop.value.uuid)" title="在 uuidLookup 中查询使用情况">🔎</span>
                                         </div>
 
                                         <!-- Comp Ref -->
@@ -249,6 +285,7 @@ export const NodeInspector = {
                                                     <span style="font-size: 11px; padding: 0 2px;">{{ item.value.className === 'cc.SpriteFrame' || item.value.className === 'cc.Texture2D' ? '🖼️' : '🧩' }}</span>
                                                     <span class="asset-name" :title="item.value.uuid">{{ item.value.name }} <span style="color:#777;font-size:9px;">[{{ item.value.className }}]</span></span>
                                                     <span v-if="item.value.uuid && item.value.uuid !== ''" class="target-mark">🎯</span>
+                                                    <span v-if="item.value.uuid" @click.stop="$emit('query-uuid-usage', item.value.uuid)" title="在 uuidLookup 中查询使用情况">🔎</span>
                                                 </div>
                                             </template>
                                             

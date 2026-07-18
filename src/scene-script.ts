@@ -1,5 +1,33 @@
 // 场景内真正负责修改编辑器状态的脚本
 module.exports = {
+    'resolve-prefab-node-by-index-path': function (event: any, args: { prefabUuid: string, childIndexPath: number[] }) {
+        try {
+            const scene = (window as any).cc.director.getScene();
+            const findRoot = (node: any): any => {
+                if (!node) return null;
+                const prefab = node._prefab;
+                const asset = prefab && prefab.root === node && prefab.asset;
+                const assetUuid = asset && (asset._uuid || asset.uuid || asset.id);
+                if (assetUuid === args.prefabUuid) return node;
+                for (const child of node.children || []) {
+                    const found = findRoot(child);
+                    if (found) return found;
+                }
+                return null;
+            };
+            let current = findRoot(scene);
+            for (const index of args.childIndexPath || []) {
+                current = current && current.children && current.children[index];
+                if (!current) break;
+            }
+            const uuid = current ? current.uuid : null;
+            if (event.reply) event.reply(null, uuid);
+            return uuid;
+        } catch (error: any) {
+            if (event.reply) event.reply(error);
+            return null;
+        }
+    },
     'set-property': function (event: any, args: { uuid: string, compName: string | null, compIndex?: number, propKey: string, value: any }) {
         const eng = (window as any).cc;
         if (!eng || !eng.engine) {

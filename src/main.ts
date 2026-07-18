@@ -18,6 +18,23 @@ function getBaseName(p: string): string {
   return parts[parts.length - 1] || '';
 }
 
+function normalizeUuid(uuid: string): string {
+    if (!uuid) return '';
+    try {
+        return uuid.length === 22 || uuid.length === 23
+            ? Editor.Utils.UuidUtils.decompressUuid(uuid)
+            : uuid;
+    } catch (_) {
+        return uuid;
+    }
+}
+
+function focusEditorNode(uuid: string) {
+    if (!uuid) return;
+    try { Editor.Ipc.sendToPanel('scene', 'scene:center-nodes', [uuid]); } catch (_) {}
+    Editor.Selection.select('node', uuid, true, true);
+}
+
 let _wss: WebSocket.Server | null = null;
 let _mcpStatus = { active: false, port: 4456, error: 'Initializing...' };
 let _logHeartbeatTimer: any = null;
@@ -109,6 +126,49 @@ module.exports = {
             if (event.reply) {
                 event.reply(null, { status: "polling_active", msg: "已经由注入的爬虫自动同步数据" });
             }
+        },
+        'query-script-asset-info'(event: any, scriptUuid: string) {
+            const uuid = normalizeUuid(scriptUuid);
+            const assetInfo = uuid && Editor.assetdb.assetInfoByUuid(uuid);
+            if (event.reply) {
+                event.reply(null, assetInfo ? {
+                    uuid,
+                    url: assetInfo.url || '',
+                    path: assetInfo.path || '',
+                    fileName: getBaseName(assetInfo.url || assetInfo.path || ''),
+                } : null);
+            }
+        },
+        'open-script'(event: any, scriptUuid: string) {
+            const uuid = normalizeUuid(scriptUuid);
+            if (uuid) Editor.Ipc.sendToMain('assets:open-text-file', uuid);
+        },
+        'query-uuid-usage'(event: any, value: string) {
+            const uuid = normalizeUuid(value);
+            if (uuid) Editor.Ipc.sendToAll('uuid-lookup:query', uuid);
+        },
+        'locate-editor-node'(event: any, detail: any) {
+            if (!detail || !detail.id) return;
+            if (!detail.prefabUuid) {
+                focusEditorNode(detail.id);
+                return;
+            }
+
+            const prefabUuid = normalizeUuid(detail.prefabUuid);
+            Editor.Ipc.sendToAll('assets:clearSearch');
+            Editor.Ipc.sendToAll('assets:hint', prefabUuid);
+            Editor.Selection.select('asset', prefabUuid);
+            Editor.Scene.callSceneScript('mcp-inspector-bridge', 'resolve-prefab-node-by-index-path', {
+                prefabUuid,
+                childIndexPath: detail.prefabChildIndexPath || [],
+            }, (error: any, resolvedNodeUuid: string) => {
+                if (error) {
+                    Editor.warn('[Bridge] Prefab 节点还原失败:', error.message || error);
+                    return;
+                }
+                // 仅在当前编辑上下文确实能还原目标节点时才选中，避免 Inspector 持续加载。
+                if (resolvedNodeUuid) focusEditorNode(resolvedNodeUuid);
+            });
         },
         'query-resolution'(event: any) {
             const profile = Editor.Profile.load('profile://project/mcp-inspector-bridge.json', 'mcp-inspector-bridge');

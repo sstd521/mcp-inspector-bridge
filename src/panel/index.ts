@@ -83,7 +83,8 @@ module.exports = Editor.Panel.extend({
                     return '#f44336';
                 });
 
-                const nodeSystem = useNodeSystem(globalState, gameView, nodeTreeRef, activeTab);
+                const devToolsSystem = useDevTools(globalState, gameView, devtoolsView, activeTab, layoutSystem.rightPanelWidth);
+                const nodeSystem = useNodeSystem(globalState, gameView, nodeTreeRef, activeTab, devToolsSystem);
 
                 const gameViewSystem = useGameView(
                     globalState,
@@ -95,8 +96,6 @@ module.exports = Editor.Panel.extend({
                     () => profilerSystem.startTickPolling(),
                     () => profilerSystem.stopTickPolling()
                 );
-
-                const devToolsSystem = useDevTools(globalState, gameView, devtoolsView, activeTab, layoutSystem.rightPanelWidth);
 
                 // --- 用户脚本系统 ---
                 const registeredScriptTools: Map<string, any> = new Map();

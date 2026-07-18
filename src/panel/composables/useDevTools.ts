@@ -163,6 +163,75 @@ export function useDevTools(globalState: any, gameView: any, devtoolsView: any, 
         }
     };
 
+    const waitForDevTools = async () => {
+        activeTab.value = 1;
+        for (let i = 0; i < 100 && !devToolsBV; i++) {
+            await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        return devToolsBV && devToolsBV.webContents;
+    };
+
+    const typeIntoDevTools = (webContents: any, text: string) => {
+        for (const char of Array.from(text || '')) {
+            webContents.sendInputEvent({ type: 'char', keyCode: char });
+        }
+    };
+
+    const sendKey = (webContents: any, keyCode: string, modifiers: string[] = []) => {
+        webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+        webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+    };
+
+    const openSource = async (quickOpenQuery: string, findQuery = '') => {
+        const webContents = await waitForDevTools();
+        if (!webContents || !quickOpenQuery) return false;
+        try {
+            await webContents.executeJavaScript("UI.actionRegistry.action('quickOpen.show').execute()");
+            webContents.focus();
+            typeIntoDevTools(webContents, quickOpenQuery);
+            await new Promise(resolve => setTimeout(resolve, 250));
+            sendKey(webContents, 'Enter');
+            if (findQuery) {
+                await new Promise(resolve => setTimeout(resolve, 250));
+                const modifier = process.platform === 'darwin' ? 'meta' : 'control';
+                sendKey(webContents, 'F', [modifier]);
+                await new Promise(resolve => setTimeout(resolve, 100));
+                sendKey(webContents, 'A', [modifier]);
+                typeIntoDevTools(webContents, findQuery);
+                await new Promise(resolve => setTimeout(resolve, 100));
+                sendKey(webContents, 'Enter');
+                sendKey(webContents, 'Escape');
+            }
+            return true;
+        } catch (error: any) {
+            if (typeof Editor !== 'undefined') Editor.warn('[Bridge] DevTools Sources 定位失败: ' + error.message);
+            return false;
+        }
+    };
+
+    const inspectButtonHandler = async (nodeUuid: string, compIndex: number, eventIndex: number, scriptName: string, handlerName: string) => {
+        const gameWV: any = gameView.value;
+        if (!gameWV) return false;
+        try {
+            const prepared = await gameWV.executeJavaScript(
+                `window.__mcpCrawler && window.__mcpCrawler.prepareButtonClickHandlerInspect(${JSON.stringify(nodeUuid)}, ${compIndex}, ${eventIndex})`
+            );
+            if (!prepared) return false;
+            await openSource(scriptName, handlerName);
+            const gameWebContents = remote.webContents.fromId(gameWV.getWebContentsId());
+            if (!gameWebContents.debugger.isAttached()) gameWebContents.debugger.attach('1.3');
+            await gameWebContents.debugger.sendCommand('Runtime.evaluate', {
+                expression: 'inspect(window.__mcpButtonClickHandler)',
+                includeCommandLineAPI: true,
+                silent: true,
+            });
+            return true;
+        } catch (error: any) {
+            if (typeof Editor !== 'undefined') Editor.warn('[Bridge] Button handler 定位失败: ' + error.message);
+            return false;
+        }
+    };
+
     const _onPanelHide = () => {
         if (devToolsBV) {
             try {
@@ -243,6 +312,8 @@ export function useDevTools(globalState: any, gameView: any, devtoolsView: any, 
     return {
         setupDevToolsWatchers,
         openDevToolsExternal,
+        openSource,
+        inspectButtonHandler,
         updateBrowserViewBounds
     };
 }

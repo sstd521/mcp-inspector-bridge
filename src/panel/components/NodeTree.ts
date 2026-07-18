@@ -28,6 +28,7 @@ export const NodeTree = {
                          :class="[
                             { 
                                 active: node.id === selectedId, 
+                                flashed: node.id === flashedId,
                                 inactive: !node.activeInHierarchy 
                             },
                             getPrefabClass(node)
@@ -59,6 +60,8 @@ export const NodeTree = {
     setup(props: any, { emit }: any) {
         const searchQuery = ref('');
         const selectedId = ref('');
+        const flashedId = ref('');
+        let flashTimer: any = null;
         // 保存节点的展开状态 id -> boolean
         const expandedState = ref({} as Record<string, boolean>);
 
@@ -282,6 +285,35 @@ export const NodeTree = {
             return false;
         };
 
+        const flashNode = (targetId: string) => {
+            let path: string[] | null = null;
+            const findPath = (node: any, currentPath: string[]): boolean => {
+                if (!node) return false;
+                if (node.id === targetId) {
+                    path = currentPath;
+                    return true;
+                }
+                const nextPath = [...currentPath, node.id];
+                for (const child of node.children || []) {
+                    if (findPath(child, nextPath)) return true;
+                }
+                return false;
+            };
+            const roots = props.treeData && props.treeData.id
+                ? [props.treeData]
+                : ((props.treeData && props.treeData.children) || []);
+            if (!roots.some((root: any) => findPath(root, [])) || !path) return false;
+            (path as string[]).forEach((id: string) => { expandedState.value[id] = true; });
+            if (flashTimer) clearTimeout(flashTimer);
+            flashedId.value = targetId;
+            setTimeout(() => {
+                const el = document.querySelector('.tree-node.flashed');
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 50);
+            flashTimer = setTimeout(() => { flashedId.value = ''; }, 700);
+            return true;
+        };
+
         const clearSearch = () => {
             searchQuery.value = '';
         };
@@ -322,6 +354,7 @@ export const NodeTree = {
         return {
             searchQuery,
             selectedId,
+            flashedId,
             visibleNodes,
             toggleExpand,
             selectNode,
@@ -330,6 +363,7 @@ export const NodeTree = {
             getIcon,
             getPrefabClass,
             expandToNode,
+            flashNode,
             hoverNode,
             clearHover,
             onContainerClick
