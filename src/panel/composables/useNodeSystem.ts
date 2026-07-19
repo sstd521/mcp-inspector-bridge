@@ -329,8 +329,8 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
     const onLocateNode = (uuid: string) => {
         if (nodeTreeRef.value) {
             const targetId = uuid;
-            const success = (nodeTreeRef.value as any).expandToNode(targetId);
-            if (!success) console.warn(`[Bridge] 树组件未能展开节点：${targetId}`);
+            const success = (nodeTreeRef.value as any).flashNode(targetId);
+            if (!success) console.warn(`[Bridge] 树组件未能高亮节点：${targetId}`);
         }
     };
 
