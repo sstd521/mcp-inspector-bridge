@@ -1,6 +1,21 @@
 # 更新日志 (Update Log)
 
 本项目记录 `mcp-inspector-bridge` 的重大里程碑、架构变更与缺陷修复记录。
+## [Unreleased] - 2026-07-17
+
+### ✨ 新特性
+
+- **MCP 脚本系统 cc 变量安全拦截 (MCP Script cc Interception)**：针对面板侧（编辑器进程）运行脚本时误用 Cocos Creator 运行时 API 的问题，引入双重拦截防御机制：
+  - **局部形参遮蔽**：在加载脚本时，将 `new Function` 改为接收 `'cc'` 形参并绑定至 `ccProxy` 代理对象，对外层任何直接使用 `cc` 的行为进行安全拦截。
+  - **全局属性监听**：在面板侧全局 `window` 上配置只读的 `cc` 拦截属性，防御在脚本外层直接调用 `window.cc.xxx`。
+  - **友好中文报错**：拦截后会抛出详细的指导性错误（如提示“无法在面板侧直接使用 cc，请在 mcp.runInGame 闭包中调用”），且面板侧展示完整错误堆栈。
+- **调试定位优化 (Source Map Mapping)**：在执行的用户脚本尾部自动注入 `//# sourceURL=mcp-script:///${fileName}`，使控制台错误堆栈能够直接定位至具体的脚本文件名和错误行号，并支持 Chrome DevTools 打断点调试。
+
+### 🧹 测试与整理
+
+- **本地模拟测试套件**：新增 `scratch/test-script-runner.ts` 模拟测试沙箱，覆盖对合法脚本、外层误用 `cc`、外层误用 `window.cc` 三大场景的自动化拦截测试。
+
+---
 
 ## [Unreleased] - 2026-07-19
 
@@ -30,6 +45,20 @@
 
 ### ✨ 新特性
 
+- **游戏录屏功能 (Video Recording)**: 在游戏预览区右上角新增半透明录屏按钮（📹），支持一键录像并弹出保存文件窗口。
+  - **录制机制**: 基于 HTML5 `MediaRecorder` API 与 WebGL 渲染缓冲捕获（`canvas.captureStream`）。
+  - **离屏双缓冲缩放 (Offscreen Canvas)**: 支持在偏好设置中自定义分辨率倍率（0.5x、1.0x、1.5x、2.0x）。通过创建后台离屏 Canvas 进行 GPU 双缓冲画面缩放，避免渲染超限并实现高清视频导出。
+  - **偏好设置集成**: 在 ⚙️ 设置面板底部新增 `🎥 录屏设置` 配置，支持对录制帧率（15、24、30、60 FPS）、分辨率倍率以及视频保存格式（WebM / MP4）的设置，并在本地自动持久化保存。
+  - **播放器进度条与寻道自动修复 (EBML Duration Fix)**: 自主实现了对 MediaRecorder 生成的原始 WebM 视频字节流的 EBML 重写算法，在 1ms 内自动计算并注入正确的 Duration 属性，彻底解决了 WebM 视频在主流播放器中“进度条显示异常、实际进度不匹配、无法拖动寻道”的顽疾。
+  - **MP4 兼容性无痛转码与降级机制 (FFmpeg Remux/Transcode)**: 当偏好设置为保存为 MP4 时，在宿主渲染进程中自动检测本地系统是否安装了 `ffmpeg` 工具。
+    - **若存在 FFmpeg**: 自动以高性能 H.264 编码方式重打包转码输出标准的 `.mp4` 文件，完美兼容 QuickTime / Premiere 等全套工具。
+    - **若缺失 FFmpeg**: 自动提示警告并安全回退至已修复进度条寻道的 `.webm` 格式，规避旧版 Electron（Cocos Creator 2.x）由于无 WebCodecs 或原生编解码支持带来的崩溃和卡死风险。
+  - **状态闪烁指示器**: 录制时按钮变更为 ⏹，且伴有红色呼吸渐变（`blink-record`）闪烁提示，提升交互感知。
+  - **涉及文件**: `src/preload.ts`, `src/panel/composables/useGameView.ts`, `src/panel/index.ts`, `src/panel/index.html`, `src/main.ts`
+
+- **组件属性完整提取与打印安全增强 (Complete Component Properties & Serialization Security)**
+  - 修复组件类名提取方法以拉取 `@property` 的 `__attrs__` 注册表，恢复 `sp.Skeleton` 与 `dragonBones.ArmatureDisplay` 组件的骨骼资源及其动画、皮肤、骨架的下拉选择功能。
+  - 过滤隐藏 `AnimList` 等非标准的冗余属性；并在组件打印序列化中安全拦截 `cc.Component` 引用类型、DOM 元素及全局对象，用 try-catch 防御。
 - **游戏截图按钮 (Screenshot Button)**: 在游戏预览区右上角新增半透明截图按钮（📷），点击后并行执行剪贴板复制和文件保存。
   - **截图机制**: 基于 Electron `webContents.capturePage()` 的 Chromium 合成器级截图，完全规避 WebGL `canvas.toDataURL()` 的 `preserveDrawingBuffer` 黑屏问题。
   - **输出方式**: 自动复制到系统剪贴板 + 弹出保存对话框（PNG 格式，默认文件名 `screenshot-YYYYMMDD-HHmmss.png`），两个操作互不阻塞。
