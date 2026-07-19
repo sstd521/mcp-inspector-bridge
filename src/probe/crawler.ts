@@ -2,6 +2,11 @@
 import { Logger } from './logger';
 import { syncNodeTree } from './crawler-serialize';
 
+const COMPONENT_LIFECYCLE_METHODS = [
+    'onLoad', 'start', 'update', 'lateUpdate', 'onEnable', 'onDisable', 'onDestroy',
+    'onFocusInEditor', 'onLostFocusInEditor', 'resetInEditor', 'onRestore',
+];
+
 function initVisualFeedbackStyle() {
     if (document.getElementById('__mcp_simulate_style')) return;
     const style = document.createElement('style');
@@ -451,6 +456,7 @@ export function initCrawler() {
                 || (eng.RenderComponent && proto === eng.RenderComponent.prototype)) return [];
             return Object.getOwnPropertyNames(proto).filter(function (methodName) {
                 if (methodName === 'constructor' || methodName.startsWith('_') || methodName.startsWith('get')) return false;
+                if (COMPONENT_LIFECYCLE_METHODS.indexOf(methodName) !== -1) return false;
                 let method = null;
                 try { method = component[methodName]; } catch (e) { return false; }
                 return typeof method === 'function' && method.length === 0;

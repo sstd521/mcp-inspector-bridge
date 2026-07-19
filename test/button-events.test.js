@@ -43,6 +43,7 @@ class RuntimeComponent {
     this.enabled = true;
   }
   refresh() { componentMethodCalls++; }
+  onLoad() {}
   _privateMethod() {}
   getDebugInfo() {}
   withArg(_value) {}
@@ -121,6 +122,44 @@ assert.strictEqual(crawler.printComponentData('button-node', 1), true);
 assert.strictEqual(window.$mcpComp, runtimeComponent);
 assert.strictEqual(crawler.printNodeData('button-node'), true);
 assert.strictEqual(window.$mcpNode, node);
+
+const pickerMessages = [];
+const pickerElements = {};
+global.document = {
+  documentElement: {
+    addEventListener() {},
+    removeEventListener() {},
+  },
+  body: {
+    appendChild(element) { element.parentNode = this; pickerElements[element.id] = element; },
+    removeChild(element) { delete pickerElements[element.id]; element.parentNode = null; },
+  },
+  createElement() { return { id: '', style: {}, parentNode: null }; },
+  getElementById(id) { return pickerElements[id] || null; },
+};
+window.__mcpInspector = {
+  sendNodeSelected(...args) { pickerMessages.push(args); },
+};
+const { initPicker } = require('../dist/probe/picker.js');
+initPicker();
+const picker = window.__mcpNodePicker;
+picker.hitTest = () => ({ uuid: 'picked-node', id: 'picked-node', name: 'PickedNode' });
+const pickerEvent = { type: 'mouseup', clientX: 10, clientY: 20, stopPropagation() {}, preventDefault() {}, stopImmediatePropagation() {} };
+picker.setContinuous(true);
+picker.enable();
+picker._onClick(pickerEvent);
+assert.strictEqual(picker.isActive, true);
+assert.deepStrictEqual(pickerMessages.pop(), ['picked-node']);
+picker._onClick({ ...pickerEvent, type: 'click' });
+assert.strictEqual(pickerMessages.length, 0);
+picker.setContinuous(false);
+picker._onClick(pickerEvent);
+assert.strictEqual(picker.isActive, false);
+picker.setContinuous(true);
+picker.enable();
+picker._onKeyDown({ key: 'Escape' });
+assert.strictEqual(picker.isActive, false);
+assert.deepStrictEqual(pickerMessages.pop(), ['', true]);
 
 const { NodeInspector } = require('../dist/panel/components/NodeInspector.js');
 const { NodeTree } = require('../dist/panel/components/NodeTree.js');

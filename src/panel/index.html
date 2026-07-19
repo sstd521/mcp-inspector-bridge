@@ -527,6 +527,11 @@
                 <button :class="['icon-btn', globalState.isNodePickerActive ? 'active' : '']"
                     :style="{ color: globalState.isNodePickerActive ? '#09f' : '#ccc', borderColor: globalState.isNodePickerActive ? '#09f' : '#555' }"
                     title="场景节点拾取" @click="toggleNodePicker">🎯</button>
+                <label title="勾选后保持拾取模式，可连续选择多个节点"
+                    style="display:flex; align-items:center; gap:2px; color:#ddd; font-size:11px; cursor:pointer; white-space:nowrap;">
+                    <input type="checkbox" v-model="globalState.isNodePickerContinuous" @change="setNodePickerContinuous"
+                        style="margin:0; accent-color:#09f;">连续
+                </label>
                 <button class="icon-btn" style="cursor:help"
                     :title="globalState.mcpStatus.active ? 'MCP已启动，端口：' + globalState.mcpStatus.port : 'MCP启动失败，原因：' + globalState.mcpStatus.error">
                     <div

@@ -3,9 +3,14 @@ import { Logger } from './logger';
 export function initPicker() {
     window.__mcpNodePicker = {
         isActive: false,
+        isContinuous: false,
         _onMouseMove: null,
         _onClick: null,
         _onKeyDown: null,
+
+        setContinuous: function (enabled) {
+            this.isContinuous = !!enabled;
+        },
 
         enable: function () {
             const self = this;
@@ -72,8 +77,8 @@ export function initPicker() {
                     e.stopImmediatePropagation();
                 }
 
-                // 仅在 click 或 mouseup 确认拾取
-                if (e.type === 'mousedown') return;
+                // mousedown/click 只负责拦截游戏输入，统一在 mouseup 确认一次拾取。
+                if (e.type !== 'mouseup') return;
 
                 const hitNode = self.hitTest(e.clientX, e.clientY); // 调试完毕，关闭 isDebug
                 let hitUuid: string | null = null;
@@ -94,13 +99,13 @@ export function initPicker() {
                     window.__mcpInspector.sendNodeSelected(hitUuid || '');
                 }
 
-                self.disable();
+                if (!self.isContinuous) self.disable();
             };
 
             self._onKeyDown = function (e) {
                 if (e.key === 'Escape') {
                     if (window.__mcpInspector && window.__mcpInspector.sendNodeSelected) {
-                        window.__mcpInspector.sendNodeSelected('');
+                        window.__mcpInspector.sendNodeSelected('', true);
                     }
                     self.disable();
                 }

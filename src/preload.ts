@@ -114,8 +114,8 @@ window.addEventListener('DOMContentLoaded', () => {
         sendRenderDebuggerPayload: (payload: any) => {
             ipcRenderer.sendToHost('render-debugger-payload', payload);
         },
-        sendNodeSelected: (uuid: string) => {
-            ipcRenderer.sendToHost('node-picker-selected', uuid);
+        sendNodeSelected: (uuid: string, cancelled = false) => {
+            ipcRenderer.sendToHost('node-picker-selected', uuid, cancelled);
         },
         sendClearSelection: () => {
             ipcRenderer.sendToHost('clear-selection');

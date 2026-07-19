@@ -651,10 +651,12 @@ export function useGameView(
                     } catch (err) { }
                 } else if (event.channel === 'node-picker-selected') {
                     const uuid = event.args[0];
+                    const cancelled = event.args[1] === true;
                     console.log(`[IPC Received] <- node-picker-selected: uuid=${uuid || 'null'}`);
                     console.log(`[Selection-Debug] Trigger: IPC-GameView-node-picker-selected | NodeID: ${uuid} | Proceeding to sync expandToNode...`);
                     try {
-                        globalState.isNodePickerActive = false;
+                        globalState.isNodePickerActive = !cancelled && !!globalState.isNodePickerContinuous;
+                        if (cancelled) globalState.isNodePickerContinuous = false;
                         if (uuid) {
                             const nt: any = nodeTreeRef.value;
                             if (nt && typeof nt.expandToNode === 'function') {

@@ -170,7 +170,7 @@ export const NodeInspector = {
                     
                     <div v-show="expandedComps[index]" class="properties-body">
                         <div v-if="comp.methods && comp.methods.length" style="padding: 8px 12px; border-bottom: 1px solid var(--border-color);">
-                            <div style="color: #bbb; font-weight: bold; margin-bottom: 6px;">Methods</div>
+                            <div style="color: #bbb; font-weight: bold; margin-bottom: 6px;" title="点击按钮会直接调用当前预览实例的方法">Methods（点击即调用）</div>
                             <div style="display: flex; flex-wrap: wrap; gap: 5px;">
                                 <button v-for="methodName in comp.methods" :key="methodName" @click.stop="$emit('component-method', comp, methodName)" :title="'调用 ' + methodName + '()'" style="padding: 3px 7px; color: #89ddff; background: #252b33; border: 1px solid #46515e; border-radius: 3px; cursor: pointer;">{{ methodName }}()</button>
                             </div>

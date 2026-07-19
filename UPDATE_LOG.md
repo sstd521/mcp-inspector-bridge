@@ -28,6 +28,8 @@
 - **uuid_lookup 深度联动**: 属性资源与内存榜单新增按类型打开和引用反查；MCP 新增 `search_editor_assets`、`get_asset_references`、`scan_missing_asset_references`、`open_asset_by_uuid`，直接复用 uuid_lookup 的 AssetDB 索引和 Scene/Prefab 扫描器。
 - **运行时组件方法**: 迁移 Inspector 的零参数方法能力，在组件卡片展示可调用的公开方法，并新增 MCP `invoke_component_method`；探针在执行前二次过滤私有、有参数及基础组件方法。
 - **真实实例直连 DevTools**: 节点/组件打印按钮分别保存真实对象到预览页 `$mcpNode` / `$mcpComp`，同时保留现有控制台和 JSON 输出。
+- **连续节点拾取**: 工具栏新增“连续”复选框，勾选即进入拾取模式并在每次选中后保持激活；`Esc` 可退出。拾取确认统一到 `mouseup`，避免连续模式一次点击重复上报。
+- **Methods 安全收敛**: 方法区标明“点击即调用”，并隐藏 `onLoad`、`onEnable`、`onDestroy` 等生命周期方法，只保留适合手动调试的公开零参数方法。
 - **节点树临时高亮**: Button Target 定位采用响应式临时状态，重复定位会正确取消上一次定时器，不污染原选中状态。
 
 ### ✅ 验证

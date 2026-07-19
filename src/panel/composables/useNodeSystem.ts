@@ -264,10 +264,20 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
         const wv: any = gameView.value;
         if (isWebViewReady(wv)) {
             const method = globalState.isNodePickerActive ? 'enable' : 'disable';
-            const code = `if(window.__mcpNodePicker) window.__mcpNodePicker.${method}();`;
+            const code = `if(window.__mcpNodePicker) { window.__mcpNodePicker.setContinuous(${!!globalState.isNodePickerContinuous}); window.__mcpNodePicker.${method}(); }`;
             const p = wv.executeJavaScript(code);
             if (p && p.catch) p.catch(()=>{});
         }
+    };
+
+    const setNodePickerContinuous = (event?: any) => {
+        if (event && event.target) globalState.isNodePickerContinuous = !!event.target.checked;
+        const wv: any = gameView.value;
+        if (!isWebViewReady(wv)) return;
+        if (globalState.isNodePickerContinuous) globalState.isNodePickerActive = true;
+        const code = `if(window.__mcpNodePicker) { window.__mcpNodePicker.setContinuous(${!!globalState.isNodePickerContinuous});${globalState.isNodePickerContinuous ? ' window.__mcpNodePicker.enable();' : ''} }`;
+        const p = wv.executeJavaScript(code);
+        if (p && p.catch) p.catch(()=>{});
     };
 
     const onRenderDebuggerToggle = (newVal: boolean) => {
@@ -496,6 +506,7 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
         onNodeHover,
         onUpdateNodeProp,
         toggleNodePicker,
+        setNodePickerContinuous,
         onRenderDebuggerToggle,
         onRenderDebuggerLocate,
         locateResource,
