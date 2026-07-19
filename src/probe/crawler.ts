@@ -329,6 +329,7 @@ export function initCrawler() {
                         enabled: comp.enabled !== false,
                         scriptUuid: scriptUuid,
                         buttonClickEvents: buttonClickEvents,
+                        methods: this.getComponentMethodNames(comp),
                         properties: props,
                     });
                 }
@@ -400,6 +401,31 @@ export function initCrawler() {
             return node && node._components && compIndex >= 0 && compIndex < node._components.length
                 ? node._components[compIndex]
                 : null;
+        },
+        getComponentMethodNames: function (component) {
+            if (!component) return [];
+            const proto = Object.getPrototypeOf(component);
+            if (!proto) return [];
+            const eng = window.cc || {};
+            if ((eng.Component && proto === eng.Component.prototype)
+                || (eng.RenderComponent && proto === eng.RenderComponent.prototype)) return [];
+            return Object.getOwnPropertyNames(proto).filter(function (methodName) {
+                if (methodName === 'constructor' || methodName.startsWith('_') || methodName.startsWith('get')) return false;
+                let method = null;
+                try { method = component[methodName]; } catch (e) { return false; }
+                return typeof method === 'function' && method.length === 0;
+            }).sort();
+        },
+        executeComponentMethod: function (nodeUuid, compIndex, methodName) {
+            const component = this.getComponentByIndex(nodeUuid, compIndex);
+            if (!component || this.getComponentMethodNames(component).indexOf(methodName) === -1) return false;
+            try {
+                component[methodName].call(component);
+                return true;
+            } catch (error) {
+                console.error('[MCP Crawler] 调用组件方法失败', methodName, error);
+                return false;
+            }
         },
         prepareButtonClickHandlerInspect: function (nodeUuid, compIndex, eventIndex) {
             const button = this.getComponentByIndex(nodeUuid, compIndex);
@@ -552,6 +578,7 @@ export function initCrawler() {
 
             const comp = node._components[compIndex];
             const eng = window.cc || {};
+            window.$mcpComp = comp;
 
             function getNodePath(n) {
                 if (!n) return '';
@@ -600,6 +627,7 @@ export function initCrawler() {
                 if (match) compName = match[1];
 
                 console.log(`%c[MCP] 组件 (${compName}) 数据导出成功 👇`, 'color: #00ff00; font-weight: bold;');
+                console.dir(comp);
                 console.log(jsonStr);
                 console.log(`%c---------------------------------------`, 'color: #00ff00; font-weight: bold;');
 
@@ -607,8 +635,10 @@ export function initCrawler() {
                 if (navigator && navigator.clipboard && navigator.clipboard.writeText) {
                     navigator.clipboard.writeText(jsonStr).catch(function (err) { });
                 }
+                return true;
             } catch (err) {
                 console.error("[MCP Crawler] 序列化组件数据失败: ", err);
+                return false;
             }
         },
 
@@ -620,10 +650,13 @@ export function initCrawler() {
             }
 
             try {
+                window.$mcpNode = node;
                 console.log('%c[MCP] 节点 (' + node.name + ') 数据已打印 👇', 'color: #00ff00; font-weight: bold;');
                 console.dir(node);
+                return true;
             } catch (err) {
                 console.error("[MCP Crawler] 打印节点数据时发生异常: ", err);
+                return false;
             }
         },
 

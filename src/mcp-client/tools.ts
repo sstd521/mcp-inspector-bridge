@@ -50,6 +50,57 @@ export function setupTools(server: Server, sendRpcToCocos: (method: string, args
                     },
                 },
                 {
+                    name: "search_editor_assets",
+                    description: "通过 uuid_lookup 按长/短 UUID、名称、db 路径或文件路径搜索编辑器资源。",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            queryText: { type: "string", description: "资源 UUID、名称或路径。" }
+                        },
+                        required: ["queryText"]
+                    },
+                },
+                {
+                    name: "get_asset_references",
+                    description: "通过 uuid_lookup 查询资源在 Scene、Prefab、动画等文件中的引用位置。",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            uuid: { type: "string", description: "要反查引用的资源 UUID。" },
+                            parentUUID: { type: "string", description: "可选，仅在指定 Scene 或 Prefab 资源中查询。" },
+                            referenceOnlyInScene: { type: "boolean", description: "是否仅查询场景引用。" }
+                        },
+                        required: ["uuid"]
+                    },
+                },
+                {
+                    name: "scan_missing_asset_references",
+                    description: "通过 uuid_lookup 扫描项目 Scene 和 Prefab 中不存在的资源或脚本 UUID。",
+                    inputSchema: { type: "object", properties: {}, required: [] },
+                },
+                {
+                    name: "open_asset_by_uuid",
+                    description: "通过 uuid_lookup 按资源类型打开场景、Prefab、贴图、SpriteFrame 或脚本。",
+                    inputSchema: {
+                        type: "object",
+                        properties: { uuid: { type: "string", description: "要打开的资源 UUID。" } },
+                        required: ["uuid"]
+                    },
+                },
+                {
+                    name: "invoke_component_method",
+                    description: "调用预览运行时组件公开的零参数方法。方法必须先出现在 get_node_detail 返回的 methods 中。",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            uuid: { type: "string", description: "节点 UUID。" },
+                            compIndex: { type: "number", description: "组件在节点上的真实索引。" },
+                            methodName: { type: "string", description: "公开零参数方法名。" }
+                        },
+                        required: ["uuid", "compIndex", "methodName"]
+                    },
+                },
+                {
                     name: "update_node_property",
                     description: "Update node/component properties.",
                     inputSchema: { 

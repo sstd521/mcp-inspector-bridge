@@ -14,11 +14,13 @@ export const NodeInspector = {
     "focus-change",
     "locate-node",
     "locate-asset",
+    "open-asset",
     "query-uuid-usage",
     "locate-editor-node",
     "open-component-script",
     "open-component-source",
     "button-action",
+    "component-method",
     "print-comp",
     "print-node",
   ],
@@ -48,11 +50,12 @@ export const NodeInspector = {
                             <div style="flex: 1; min-width: 0; margin-left: 8px; margin-right: 8px; display: flex; align-items: center;">
                                 <input type="text" :value="nodeDetail.name" @change="onUpdateProp(null, 'name', $event.target.value)" style="width: 100%; box-sizing: border-box; padding: 2px 4px; background: var(--bg-input); color: var(--text-main); border: 1px solid transparent; border-radius: var(--radius); min-width: 0; outline: none; transition: border-color 0.2s;" onfocus="this.style.borderColor='var(--accent-blue)'" onblur="this.style.borderColor='transparent'" />
                                 <span v-if="nodeDetail.prefabUuid" @click.stop="$emit('locate-asset', nodeDetail.prefabUuid)" style="cursor: pointer; font-size: 14px; margin-left: 8px; color: var(--accent-blue); filter: drop-shadow(0 0 4px var(--accent-blue));" title="在资源管理器中定位预制体">🎯</span>
-                                <span v-if="nodeDetail.prefabUuid" @click.stop="$emit('query-uuid-usage', nodeDetail.prefabUuid)" style="cursor: pointer; font-size: 13px; margin-left: 5px;" title="在 uuidLookup 中查询预制体使用情况">🔎</span>
+                                <span v-if="nodeDetail.prefabUuid" @click.stop="$emit('open-asset', nodeDetail.prefabUuid)" style="cursor: pointer; font-size: 13px; margin-left: 5px; color: #89ddff;" title="按资源类型打开预制体">↗</span>
+                                <span v-if="nodeDetail.prefabUuid" @click.stop="$emit('query-uuid-usage', nodeDetail.prefabUuid)" style="cursor: pointer; font-size: 13px; margin-left: 5px;" title="在 uuid_lookup 中查询预制体使用情况">🔎</span>
                             </div>
                             <div class="header-right">
                                 <span @click.stop="$emit('locate-editor-node', nodeDetail)" title="在编辑器场景中定位节点" style="cursor: pointer; margin-right: 6px; color: var(--accent-blue);">📍</span>
-                                <span class="print-btn" @click.stop="onPrintNode" title="在控制台直接打印该节点对象" style="cursor: pointer; margin-right: 6px;">🖨️</span>
+                                <span class="print-btn" @click.stop="onPrintNode" title="保存真实节点到 $mcpNode 并在控制台打印" style="cursor: pointer; margin-right: 6px;">🖨️</span>
                                 <span class="size-tag" style="background: rgba(0,0,0,0.3); border-color: transparent;">Node</span>
                             </div>
                         </div>
@@ -153,11 +156,12 @@ export const NodeInspector = {
                         <input type="checkbox" class="enable-toggle" :checked="comp.enabled" @change="onUpdateProp(comp.name, 'enabled', $event.target.checked, comp.realIndex)" title="启用/禁用当前组件">
                         <span class="component-name" @click="toggleComp(index)" style="cursor: pointer; flex: 1;">{{ comp.name }}</span>
                         <span v-if="comp.scriptUuid" @click.stop="$emit('locate-asset', comp.scriptUuid)" title="在资源管理器中定位组件脚本" style="cursor: pointer; margin-right: 6px; color: var(--accent-blue); filter: drop-shadow(0 0 4px var(--accent-blue));">🎯</span>
-                        <span v-if="comp.scriptUuid" @click.stop="$emit('query-uuid-usage', comp.scriptUuid)" title="在 uuidLookup 中查询组件使用情况" style="cursor: pointer; margin-right: 6px;">🔎</span>
+                        <span v-if="comp.scriptUuid" @click.stop="$emit('open-asset', comp.scriptUuid)" title="按资源类型打开组件脚本" style="cursor: pointer; margin-right: 6px; color: #89ddff;">↗</span>
+                        <span v-if="comp.scriptUuid" @click.stop="$emit('query-uuid-usage', comp.scriptUuid)" title="在 uuid_lookup 中查询组件使用情况" style="cursor: pointer; margin-right: 6px;">🔎</span>
                         <span v-if="comp.scriptUuid" @click.stop="$emit('open-component-script', comp)" title="用代码编辑器打开脚本" style="cursor: pointer; margin-right: 6px; color: #c792ea;">📂</span>
                         <span v-if="comp.scriptUuid" @click.stop="$emit('open-component-source', comp)" title="在 DevTools Sources 中打开脚本" style="cursor: pointer; margin-right: 6px; color: #89ddff;">&lt;/&gt;</span>
                         <span v-if="comp.buttonClickEvents" @click.stop="$emit('button-action', 'simulate', comp, null)" title="模拟点击 Button（触发全部 handler）" style="cursor: pointer; margin-right: 6px; color: #8bc34a;">▶</span>
-                        <span class="print-btn" @click.stop="onPrintComponent(nodeDetail.id, comp.realIndex)" title="将当前组件数据打印/导出为JSON">🖨️</span>
+                        <span class="print-btn" @click.stop="onPrintComponent(nodeDetail.id, comp.realIndex)" title="保存真实组件到 $mcpComp，并打印对象及 JSON">🖨️</span>
                         <div class="header-right" @click="toggleComp(index)" style="cursor: pointer;">
                             <span class="size-tag">属性: {{ comp.properties ? comp.properties.length : 0 }}</span>
                             <span style="font-size: 10px; color: #888;">{{ expandedComps[index] ? '▼' : '◀' }}</span>
@@ -165,6 +169,12 @@ export const NodeInspector = {
                     </div>
                     
                     <div v-show="expandedComps[index]" class="properties-body">
+                        <div v-if="comp.methods && comp.methods.length" style="padding: 8px 12px; border-bottom: 1px solid var(--border-color);">
+                            <div style="color: #bbb; font-weight: bold; margin-bottom: 6px;">Methods</div>
+                            <div style="display: flex; flex-wrap: wrap; gap: 5px;">
+                                <button v-for="methodName in comp.methods" :key="methodName" @click.stop="$emit('component-method', comp, methodName)" :title="'调用 ' + methodName + '()'" style="padding: 3px 7px; color: #89ddff; background: #252b33; border: 1px solid #46515e; border-radius: 3px; cursor: pointer;">{{ methodName }}()</button>
+                            </div>
+                        </div>
                         <div v-if="comp.buttonClickEvents" class="button-events">
                             <div style="display:flex; justify-content:space-between; margin-bottom:4px; color:#bbb;">
                                 <b>Click Events</b><span>{{ comp.buttonClickEvents.length }}</span>
@@ -231,7 +241,8 @@ export const NodeInspector = {
                                             <span style="font-size: 11px; padding: 0 2px;">{{ prop.value.className === 'cc.SpriteFrame' || prop.value.className === 'cc.Texture2D' ? '🖼️' : '🧩' }}</span>
                                             <span class="asset-name" :title="prop.value.uuid">{{ prop.value.name }} <span style="color:#777;font-size:9px;">[{{ prop.value.className }}]</span></span>
                                             <span v-if="prop.value.uuid && prop.value.uuid !== ''" class="target-mark">🎯</span>
-                                            <span v-if="prop.value.uuid" @click.stop="$emit('query-uuid-usage', prop.value.uuid)" title="在 uuidLookup 中查询使用情况">🔎</span>
+                                            <span v-if="prop.value.uuid" @click.stop="$emit('open-asset', prop.value.uuid)" title="按资源类型打开">↗</span>
+                                            <span v-if="prop.value.uuid" @click.stop="$emit('query-uuid-usage', prop.value.uuid)" title="在 uuid_lookup 中查询使用情况">🔎</span>
                                         </div>
 
                                         <!-- Comp Ref -->
@@ -285,7 +296,8 @@ export const NodeInspector = {
                                                     <span style="font-size: 11px; padding: 0 2px;">{{ item.value.className === 'cc.SpriteFrame' || item.value.className === 'cc.Texture2D' ? '🖼️' : '🧩' }}</span>
                                                     <span class="asset-name" :title="item.value.uuid">{{ item.value.name }} <span style="color:#777;font-size:9px;">[{{ item.value.className }}]</span></span>
                                                     <span v-if="item.value.uuid && item.value.uuid !== ''" class="target-mark">🎯</span>
-                                                    <span v-if="item.value.uuid" @click.stop="$emit('query-uuid-usage', item.value.uuid)" title="在 uuidLookup 中查询使用情况">🔎</span>
+                                                    <span v-if="item.value.uuid" @click.stop="$emit('open-asset', item.value.uuid)" title="按资源类型打开">↗</span>
+                                                    <span v-if="item.value.uuid" @click.stop="$emit('query-uuid-usage', item.value.uuid)" title="在 uuid_lookup 中查询使用情况">🔎</span>
                                                 </div>
                                             </template>
                                             

@@ -83,13 +83,19 @@ async function sendRpcToCocos(methodName: string, args: any = {}): Promise<any> 
         const reqId = Date.now().toString();
         const ws = new WebSocket(`ws://localhost:${targetPort}`);
 
+        // 资源引用和全项目缺失 UUID 扫描需要遍历磁盘，不能沿用普通工具的 5 秒上限。
+        const timeoutMs = methodName === 'scan_missing_asset_references'
+            ? 65000
+            : (methodName === 'get_asset_references'
+                ? 35000
+                : (methodName === 'search_editor_assets' ? 15000 : 5000));
         const timeout = setTimeout(() => {
             if (!isDone) {
                 isDone = true;
                 try { ws.close(); } catch(e) {}
                 reject(new Error(`Timeout: Cocos Bridge at port ${targetPort} does not respond in time.`));
             }
-        }, 5000);
+        }, timeoutMs);
 
         ws.on('open', () => {
             if (methodName === 'ping') {

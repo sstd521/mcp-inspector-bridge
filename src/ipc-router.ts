@@ -16,6 +16,17 @@ const TOOL_IPC_MAP: Record<string, string> = {
     'disable_script': 'mcp-script-disable',
     'list_scripts': 'mcp-script-list',
     'refresh_preview': 'mcp-refresh-preview',
+    'invoke_component_method': 'mcp-invoke-component-method',
+};
+
+/**
+ * 直接复用 uuid_lookup 的主进程能力，避免复制资源索引和 Scene/Prefab 扫描逻辑。
+ */
+export const UUID_LOOKUP_TOOL_MAP: Record<string, { channel: string, timeout: number }> = {
+    'search_editor_assets': { channel: 'uuid_lookup:query-resource', timeout: 10000 },
+    'get_asset_references': { channel: 'uuid_lookup:query-uuid-usage', timeout: 30000 },
+    'scan_missing_asset_references': { channel: 'uuid_lookup:scan-missing-uuid', timeout: 60000 },
+    'open_asset_by_uuid': { channel: 'uuid_lookup:open-asset-by-main', timeout: 5000 },
 };
 
 const CACHE: Record<string, { timestamp: number, data: any }> = {};
@@ -34,6 +45,35 @@ function dispatchToPanelWithTimeout(channel: string, args: any, timeoutMs = 3000
             if (err) reject(err);
             else resolve(res);
         }, timeoutMs + 500); 
+    });
+}
+
+/** 调用可选的 uuid_lookup 插件，并在未安装时尽早返回可读错误。 */
+function dispatchToUuidLookupWithTimeout(channel: string, args: any, timeoutMs: number): Promise<any> {
+    return new Promise((resolve, reject) => {
+        let packagePath = '';
+        try {
+            packagePath = Editor.Package && Editor.Package.packagePath
+                ? Editor.Package.packagePath('uuid_lookup')
+                : '';
+        } catch (_) {}
+        if (!packagePath) {
+            reject(new Error('未安装或未启用 uuid_lookup 插件，无法使用编辑器资源联动工具'));
+            return;
+        }
+
+        let finished = false;
+        const timer = setTimeout(() => {
+            finished = true;
+            reject(new Error(`UUID_LOOKUP_TIMEOUT: ${channel} 在 ${timeoutMs}ms 内未响应`));
+        }, timeoutMs);
+        Editor.Ipc.sendToMain(channel, args, (err: any, result: any) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            if (err) reject(err);
+            else resolve(result);
+        }, timeoutMs + 500);
     });
 }
 
@@ -168,7 +208,8 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
                         }
 
                         const ipcChannel = TOOL_IPC_MAP[name];
-                        if (!ipcChannel) {
+                        const uuidLookupTool = UUID_LOOKUP_TOOL_MAP[name];
+                        if (!ipcChannel && !uuidLookupTool) {
                             ws.send(JSON.stringify({
                                 jsonrpc: "2.0",
                                 id: reqId,
@@ -236,7 +277,9 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
                         }
 
                         try {
-                            const res = await dispatchToPanelWithTimeout(ipcChannel, args, 3000);
+                            const res = uuidLookupTool
+                                ? await dispatchToUuidLookupWithTimeout(uuidLookupTool.channel, args, uuidLookupTool.timeout)
+                                : await dispatchToPanelWithTimeout(ipcChannel, args, 3000);
                             let contentText = '';
                             if (!res || res.error) {
                                 contentText = JSON.stringify({ error: (res && res.error) || 'Unknown IPC error' });

@@ -683,9 +683,10 @@
                         style="flex: 1; overflow-y: auto; background: var(--bg-main); min-width: 0; min-height: 0; position: relative; padding: 10px;">
                         <node-inspector :node-detail="globalState.nodeDetail" @update-prop="onUpdateNodeProp"
                             @hover-change="globalState.isInspectorHovered = $event" @focus-change="globalState.isInspectorFocused = $event" @locate-node="onLocateNode"
-                            @locate-asset="onLocateAsset" @print-comp="onPrintComp"
+                            @locate-asset="onLocateAsset" @open-asset="onOpenAsset" @print-comp="onPrintComp"
                             @locate-editor-node="onLocateEditorNode" @open-component-script="onOpenComponentScript"
                             @open-component-source="onOpenComponentSource" @button-action="onButtonAction"
+                            @component-method="onComponentMethod"
                             @query-uuid-usage="onQueryUuidUsage"
                             @print-node="onPrintNode"></node-inspector>
                         <div v-show="isNodeTreeDragging" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 99;"></div>
@@ -1019,6 +1020,8 @@
                                                 style="cursor: pointer; font-size: calc(var(--base-font-size, 13px) - 1px); flex-shrink: 0; padding-left: 4px; opacity: 0.8; transition: opacity 0.2s;"
                                                 title="在资源管理器中定位" onmouseover="this.style.opacity='1'"
                                                 onmouseout="this.style.opacity='0.8'">🎯</span>
+                                            <span v-if="res.id" @click.stop="onOpenAsset(res.id)" style="cursor: pointer; padding-left: 4px; color: #89ddff;" title="按资源类型打开">↗</span>
+                                            <span v-if="res.id" @click.stop="onQueryUuidUsage(res.id)" style="cursor: pointer; padding-left: 4px;" title="在 uuid_lookup 中查询使用情况">🔎</span>
                                         </td>
                                         <td style="padding: 4px 6px; color: #88c;">{{ res.type }}</td>
                                         <td style="padding: 4px 6px; color: #e57373;">{{ formatBytes(res.memory) }}</td>
@@ -1083,6 +1086,8 @@
                                                     style="cursor: pointer; font-size: calc(var(--base-font-size, 13px) - 2px); flex-shrink: 0; padding-left: 4px; opacity: 0.8; transition: opacity 0.2s;"
                                                     title="在资源管理器中定位" onmouseover="this.style.opacity='1'"
                                                     onmouseout="this.style.opacity='0.8'">🎯</span>
+                                                <span v-if="bres.id" @click.stop="onOpenAsset(bres.id)" style="cursor: pointer; padding-left: 4px; color: #89ddff;" title="按资源类型打开">↗</span>
+                                                <span v-if="bres.id" @click.stop="onQueryUuidUsage(bres.id)" style="cursor: pointer; padding-left: 4px;" title="在 uuid_lookup 中查询使用情况">🔎</span>
                                             </td>
                                             <td style="padding: 3px; color: #777;">{{ bres.type }}</td>
                                             <td style="padding: 3px; color: #e57373;">{{ formatBytes(bres.memory) }}

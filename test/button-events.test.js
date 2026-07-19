@@ -6,6 +6,7 @@ class Button {}
 
 let handlerCalls = 0;
 let nodeClickCalls = 0;
+let componentMethodCalls = 0;
 const handlerComponent = {
   onTap(_button, data) {
     handlerCalls++;
@@ -36,6 +37,17 @@ const button = Object.assign(new Button(), {
   },
   _emitClickEvents() { handlerCalls += this.clickEvents.length; },
 });
+class RuntimeComponent {
+  constructor() {
+    this.name = 'RuntimeComponent';
+    this.enabled = true;
+  }
+  refresh() { componentMethodCalls++; }
+  _privateMethod() {}
+  getDebugInfo() {}
+  withArg(_value) {}
+}
+const runtimeComponent = new RuntimeComponent();
 const node = {
   uuid: 'button-node',
   id: 'button-node',
@@ -44,7 +56,7 @@ const node = {
   isValid: true,
   children: [],
   childrenCount: 0,
-  _components: [button],
+  _components: [button, runtimeComponent],
   getComponent(Type) { return Type === Button ? button : null; },
 };
 const scene = Object.assign(new Scene(), {
@@ -100,6 +112,15 @@ assert.strictEqual(handlerCalls, 1);
 assert.strictEqual(crawler.simulateButtonClick('button-node', 0), true);
 assert.strictEqual(handlerCalls, 3);
 assert.strictEqual(nodeClickCalls, 1);
+assert.deepStrictEqual(detail.components[1].methods, ['refresh']);
+assert.strictEqual(crawler.executeComponentMethod('button-node', 1, 'refresh'), true);
+assert.strictEqual(componentMethodCalls, 1);
+assert.strictEqual(crawler.executeComponentMethod('button-node', 1, '_privateMethod'), false);
+assert.strictEqual(crawler.executeComponentMethod('button-node', 1, 'withArg'), false);
+assert.strictEqual(crawler.printComponentData('button-node', 1), true);
+assert.strictEqual(window.$mcpComp, runtimeComponent);
+assert.strictEqual(crawler.printNodeData('button-node'), true);
+assert.strictEqual(window.$mcpNode, node);
 
 const { NodeInspector } = require('../dist/panel/components/NodeInspector.js');
 const { NodeTree } = require('../dist/panel/components/NodeTree.js');
@@ -119,6 +140,7 @@ global.Editor = {
 const {
   locateEditorAsset,
   normalizeEditorUuid,
+  openEditorAsset,
   openEditorScript,
   openEditorUuidLookup,
   toSerializableNodeDetail,
@@ -148,6 +170,8 @@ assert.deepStrictEqual(ipcCalls.slice(-2), [
 assert.deepStrictEqual(selectionCalls.pop(), ['asset', 'full-asset-uuid']);
 assert.strictEqual(openEditorScript('full-script-uuid'), true);
 assert.deepStrictEqual(ipcCalls.pop(), ['main', 'assets:open-text-file', 'full-script-uuid']);
+assert.strictEqual(openEditorAsset('full-prefab-uuid'), true);
+assert.deepStrictEqual(ipcCalls.pop(), ['main', 'mcp-inspector-bridge:open-asset-with-uuid-lookup', 'full-prefab-uuid']);
 const originalSetTimeout = global.setTimeout;
 global.setTimeout = callback => { callback(); return 0; };
 try {
@@ -159,5 +183,11 @@ assert.deepStrictEqual(ipcCalls.slice(-2), [
   ['main', 'uuid_lookup:open-panel'],
   ['all', 'uuid-lookup:query', 'full-prefab-uuid'],
 ]);
+
+const { UUID_LOOKUP_TOOL_MAP } = require('../dist/ipc-router.js');
+assert.strictEqual(UUID_LOOKUP_TOOL_MAP.search_editor_assets.channel, 'uuid_lookup:query-resource');
+assert.strictEqual(UUID_LOOKUP_TOOL_MAP.get_asset_references.timeout, 30000);
+assert.strictEqual(UUID_LOOKUP_TOOL_MAP.scan_missing_asset_references.timeout, 60000);
+assert.strictEqual(UUID_LOOKUP_TOOL_MAP.open_asset_by_uuid.channel, 'uuid_lookup:open-asset-by-main');
 
 console.log('button-events.test.js: ok');

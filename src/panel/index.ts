@@ -875,6 +875,25 @@ mcp.log('脚本已加载');
             `;
             wv.executeJavaScript(code).then((r:any) => { if(event.reply) event.reply(null, typeof r === 'string' ? JSON.parse(r) : r); }).catch((e:any) => { if(event.reply) event.reply(null, { error: e.message }); });
         },
+        'mcp-invoke-component-method'(this: any, event: any, args: any) {
+            const wv: any = this.shadowRoot ? this.shadowRoot.querySelector('#game-view') : null;
+            if (!wv) { if (event.reply) event.reply(null, { error: 'No WebView' }); return; }
+            if (typeof wv.isConnected === 'boolean' && !wv.isConnected) { if (event.reply) event.reply(null, { error: 'WebView detached from DOM' }); return; }
+            try { wv.getWebContentsId(); } catch (e) { if (event.reply) event.reply(null, { error: 'WebView not ready' }); return; }
+            const uuid = args && typeof args.uuid === 'string' ? args.uuid : '';
+            const compIndex = args && Number.isInteger(args.compIndex) ? args.compIndex : -1;
+            const methodName = args && typeof args.methodName === 'string' ? args.methodName : '';
+            const code = `
+                (function(){
+                    try {
+                        if(!window.__mcpCrawler || typeof window.__mcpCrawler.executeComponentMethod !== 'function') return JSON.stringify({ error: 'Crawler method not injected' });
+                        var ok = window.__mcpCrawler.executeComponentMethod(${JSON.stringify(uuid)}, ${compIndex}, ${JSON.stringify(methodName)});
+                        return JSON.stringify({ success: ok });
+                    } catch(e) { return JSON.stringify({ error: 'EXECUTION_FAILED', msg: e.message }); }
+                })();
+            `;
+            wv.executeJavaScript(code).then((r:any) => { if(event.reply) event.reply(null, typeof r === 'string' ? JSON.parse(r) : r); }).catch((e:any) => { if(event.reply) event.reply(null, { error: e.message }); });
+        },
         'mcp-update-property'(this: any, event: any, args: any) {
             const wv: any = this.shadowRoot ? this.shadowRoot.querySelector('#game-view') : null;
             if(!wv) { if (event.reply) event.reply(null, { error: 'No WebView' }); return; }

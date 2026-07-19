@@ -49,8 +49,16 @@ export function openEditorUuidLookup(uuid: string): boolean {
         if (Editor.Panel && Editor.Panel.findWindow && Editor.Panel.findWindow('uuid_lookup')) delay = 0;
     } catch (_) {}
     Editor.Ipc.sendToMain('uuid_lookup:open-panel');
-    // uuidLookup 首次创建面板约需 2 秒；过早发送查询会被直接丢弃。
+    // uuid_lookup 首次创建面板约需 2 秒；过早发送查询会被直接丢弃。
     setTimeout(() => Editor.Ipc.sendToAll('uuid-lookup:query', targetUuid), delay);
+    return true;
+}
+
+export function openEditorAsset(uuid: string): boolean {
+    const targetUuid = normalizeEditorUuid(uuid);
+    if (!targetUuid || typeof Editor === 'undefined' || !Editor.Ipc) return false;
+    // Creator 2.4 的面板进程不保证暴露 Editor.Package，交给插件主进程按真实包名检测。
+    Editor.Ipc.sendToMain('mcp-inspector-bridge:open-asset-with-uuid-lookup', targetUuid);
     return true;
 }
 
@@ -70,6 +78,7 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
                 oComp.realIndex = nComp.realIndex;
                 oComp.scriptUuid = nComp.scriptUuid;
                 oComp.buttonClickEvents = nComp.buttonClickEvents;
+                oComp.methods = nComp.methods;
                 if (oComp.properties && nComp.properties) {
                     const pMap: Record<string, any> = {};
                     oComp.properties.forEach((p: any) => pMap[p.key] = p);
@@ -356,6 +365,23 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
         openEditorUuidLookup(uuid);
     };
 
+    const onOpenAsset = (uuid: string) => {
+        if (openEditorAsset(uuid)) return;
+        locateEditorAsset(uuid);
+        if (typeof Editor !== 'undefined') Editor.warn('[Bridge] 无法调用 uuid_lookup，已改为在资源管理器中定位');
+    };
+
+    const onComponentMethod = async (component: any, methodName: string) => {
+        if (!component || !methodName || !globalState.nodeDetail) return false;
+        const wv: any = gameView.value;
+        if (!isWebViewReady(wv)) return false;
+        const success = await wv.executeJavaScript(
+            `window.__mcpCrawler && window.__mcpCrawler.executeComponentMethod(${JSON.stringify(globalState.nodeDetail.id)}, ${Number(component.realIndex)}, ${JSON.stringify(methodName)})`,
+        );
+        if (!success && typeof Editor !== 'undefined') Editor.warn(`[Bridge] 组件方法调用失败: ${methodName}()`);
+        return !!success;
+    };
+
     const onButtonAction = async (action: string, component: any, eventInfo: any) => {
         if (!component || !globalState.nodeDetail) return;
         if (action === 'locate-target') {
@@ -477,8 +503,10 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
         onLocateAsset,
         onLocateEditorNode,
         onQueryUuidUsage,
+        onOpenAsset,
         onOpenComponentScript,
         onOpenComponentSource,
+        onComponentMethod,
         onButtonAction,
         onPrintComp,
         onPrintNode

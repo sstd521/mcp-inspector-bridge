@@ -13,7 +13,16 @@
 | `05f2b84` 点击 Component 打开脚本 | Button 事件 Component 名称与“打开脚本”按钮均可点击 |
 | `91fe436` Handler 可点击 | 点击 Handler 进入 DevTools Sources，并通过 CDP inspect 定位函数 |
 | `6ac5b9a` 多 Handler 模拟点击 | 展示全部 Click Events；支持单 Handler 触发与完整 Button 点击 |
-| `830f602`、`e124b03` uuidLookup 联动 | Prefab、组件脚本、资源引用提供可选的使用情况查询 |
+| `830f602`、`e124b03` uuid_lookup 联动 | Prefab、组件脚本、资源引用与内存资源提供定位、按类型打开和使用情况查询 |
+| `aa.js` 组件方法调用 | 展示公开零参数方法；UI 与 MCP 共用探针二次校验后执行 |
+| `aa.js` 真实对象全局调试 | 节点与组件分别保存为预览 DevTools 的 `$mcpNode`、`$mcpComp` |
+
+## uuid_lookup 联动覆盖
+
+- 面板层：Prefab、组件脚本、属性中的单个/数组资源和内存资源榜单均提供定位、按类型打开、反查引用入口。
+- MCP 层：提供资源搜索、引用反查、缺失 UUID 扫描和按类型打开四个工具；长耗时扫描使用独立超时。
+- 复用边界：继续由 uuid_lookup 维护资源索引、Scene/Prefab/动画引用扫描、缺失 UUID 识别和资源类型打开策略，当前插件不复制这些实现。
+- 降级边界：未安装 uuid_lookup 时核心运行时检查照常工作，面板“按类型打开”回退为普通资源定位，MCP 返回明确的可选插件缺失错误。
 
 ## 当前插件已覆盖或更强
 
@@ -31,6 +40,7 @@
 - HTTP 代理和网络限速：会修改 Electron 全局 session；现阶段保留 DevTools Network 原生能力，避免影响编辑器其他请求。
 - 删除/复制节点、删除/重排组件、保存 Prefab：这些是破坏性编辑能力，与当前“运行时修改、不脏化 Scene”的安全边界冲突。
 - 旧版内置代码执行器、LocalStorage/全局变量面板：已由内嵌 DevTools Console/Application/Sources 覆盖。
+- uuid_lookup 的独立查询面板、历史记录、上下文菜单和结果列表：保留在原插件中，当前插件只调用其公开 IPC，避免维护第二套资源查询 UI。
 - `aa_low_version.js` / `app_low_electron.js` 双份实现：当前 TypeScript 单实现已有 Electron 跨代降级，不复制双份维护成本。
 
 验证命令：`npm test`。

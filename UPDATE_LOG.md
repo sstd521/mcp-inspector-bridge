@@ -9,18 +9,21 @@
 - **Button Click Events 检查器**: 展示全部绑定事件的 Target、Component、Handler 和 CustomEventData，支持目标节点临时高亮、脚本直开、Sources 函数定位、单 Handler 触发和完整 Button 模拟点击。
 - **脚本定位增强**: 通过 AssetDB 获取真实 `.ts` / `.js` 文件名，可从任意自定义组件直接用代码编辑器或内嵌 DevTools Sources 打开。
 - **编辑器节点还原**: 普通节点直接聚焦；Prefab 子节点通过资源 UUID + 子索引路径还原，仅在当前编辑上下文成功解析后才选中节点，避免属性检查器持续加载。
-- **uuidLookup 联动**: Prefab、组件脚本和资源引用可直接查询使用情况；未安装 uuidLookup 时不影响插件自身功能。
+- **uuid_lookup 联动**: Prefab、组件脚本和资源引用可直接查询使用情况；未安装 uuid_lookup 时不影响插件自身功能。
+- **uuid_lookup 深度联动**: 属性资源与内存榜单新增按类型打开和引用反查；MCP 新增 `search_editor_assets`、`get_asset_references`、`scan_missing_asset_references`、`open_asset_by_uuid`，直接复用 uuid_lookup 的 AssetDB 索引和 Scene/Prefab 扫描器。
+- **运行时组件方法**: 迁移 Inspector 的零参数方法能力，在组件卡片展示可调用的公开方法，并新增 MCP `invoke_component_method`；探针在执行前二次过滤私有、有参数及基础组件方法。
+- **真实实例直连 DevTools**: 节点/组件打印按钮分别保存真实对象到预览页 `$mcpNode` / `$mcpComp`，同时保留现有控制台和 JSON 输出。
 - **节点树临时高亮**: Button Target 定位采用响应式临时状态，重复定位会正确取消上一次定时器，不污染原选中状态。
 
 ### ✅ 验证
 
-- 新增 `test/button-events.test.js`，覆盖多 Handler 解析、单 Handler 触发、Handler inspect 准备、完整 Button 模拟点击、编辑器资源/脚本/uuidLookup 原生动作，以及 Prefab 节点 IPC 数据可克隆性。
+- 扩展 `test/button-events.test.js`，覆盖多 Handler、组件方法过滤与执行、DevTools 全局实例、编辑器资源/脚本/uuid_lookup 动作、uuid_lookup MCP 映射，以及 Prefab 节点 IPC 数据可克隆性。
 
 ### 🐛 缺陷修复
 
 - **修复 Prefab 节点定位无响应**：发送 IPC 前将 Vue 响应式 `prefabChildIndexPath` 转换为纯数字数组，消除 Creator 2.4.7 的 `An object could not be cloned` 异常。
 - **修复资源定位视觉上无响应**：定位时同步清空资源搜索、提示资源并真正选中资源。
-- **修复 uuidLookup / 脚本按钮静默无响应**：改为从面板直接调用 Creator 原生命令；uuidLookup 会先打开面板再查询，脚本 UUID 会先解压再打开。
+- **修复 uuid_lookup / 脚本按钮静默无响应**：改为从面板直接调用 Creator 原生命令；uuid_lookup 会先打开面板再查询，脚本 UUID 会先解压再打开。
 - **Sources 定位降级**：AssetDB IPC 500ms 未响应时使用组件名继续 Quick Open，避免无限等待。
 
 ## [Unreleased] - 2026-07-09

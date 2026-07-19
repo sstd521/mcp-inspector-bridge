@@ -147,6 +147,24 @@ module.exports = {
             const uuid = normalizeUuid(value);
             if (uuid) Editor.Ipc.sendToAll('uuid-lookup:query', uuid);
         },
+        'open-asset-with-uuid-lookup'(event: any, value: string) {
+            const uuid = normalizeUuid(value);
+            if (!uuid) return;
+            let packagePath = '';
+            try {
+                packagePath = Editor.Package && Editor.Package.packagePath
+                    ? Editor.Package.packagePath('uuid_lookup')
+                    : '';
+            } catch (_) {}
+            if (packagePath) {
+                Editor.Ipc.sendToMain('uuid_lookup:open-asset-by-main', { uuid });
+                return;
+            }
+            Editor.Ipc.sendToAll('assets:clearSearch');
+            Editor.Ipc.sendToAll('assets:hint', uuid);
+            if (Editor.Selection && Editor.Selection.select) Editor.Selection.select('asset', uuid);
+            Editor.warn('[Bridge] uuid_lookup 未安装，已改为在资源管理器中定位');
+        },
         'locate-editor-node'(event: any, detail: any) {
             if (!detail || !detail.id) return;
             if (!detail.prefabUuid) {

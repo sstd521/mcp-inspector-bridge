@@ -69,6 +69,8 @@ npm run build
 - **基于项目身份的握手协议**：心跳回执注入 `projectName` 与 `projectPath`，允许 AI 快速识别目标平行宇宙。
 - **多端全平台自动配置**：支持向 22 款主流 AI 客户端（如 Claude Desktop、Cursor 等）进行自动探测与免配桥接。
 - **MCP 路由工具扩展**：提供 `get_active_instances` 扫描活跃端口、`set_active_instance` 绑定指定项目端口、以及 `refresh_preview` 主动刷新游戏预览窗口。
+- **uuid_lookup 资源工具**：可选安装 `uuid_lookup` 后，MCP 可调用 `search_editor_assets`、`get_asset_references`、`scan_missing_asset_references`、`open_asset_by_uuid`，直接复用其资源索引与 Scene/Prefab 扫描器。
+- **运行时组件方法**：`get_node_detail` 返回组件的公开零参数 `methods`，可通过 `invoke_component_method` 调用；探针执行前会再次校验方法名与参数数量。
 - **环境安全异常零漏截获 (Eager Log Capture)**：针对 Webview 预览采用 CDP `Runtime.consoleAPICalled` 零注入被动监听（非侵入式，完美保留 DevTools 源归属）；针对 BrowserView 采用原生 `console-message` 事件。双重防御配合每秒后台激进式探测定时器，在游戏初始化第一帧即接管日志，彻底杜绝早期生命周期错误丢失。CDP 不可用时自动降级至注入方案。
 - **超保真渲染验证实况图**：直接为大语言模型一键注入运行时截图，打破次元壁。
 - **可视化 MCP 通信降维打击 (Debug Console)**：在偏好设置面板内置专属通信日志流，实时抓取前后端请求细节与返回结构；更具备极致的数据防爆护城河（自动截断长字符串与双峰队首淘汰流控机制），轻松排查大语言建模幻觉与传输丢包。
@@ -82,12 +84,13 @@ npm run build
 - **组件启停控制**：统一的的复选开关 `enabled`，一键休眠/唤醒指定组件
 - **引用追踪定位 🎯**：节点级引用、资源字典、预制体地址均可无痛一键跳转定位归属并闪烁对焦
 - **智能枚举下拉**：基于运行时原型的强反射抓取，自动兼容多达 40 种官方内置枚举（诸如 `Sprite.type`) 以及业务测自定义枚举列表，拒绝盲填查字典的痛苦
-- **组件 JSON 免签分发**：点击组件 🖨️ 图标，将规避循环污染后的数据一键打印直出控制台绿幕，并自动顺时写入系统安全剪贴板
-- **节点对象直连控制台**：点击节点基础属性区右上角的 🖨️ 图标，将整个实例对象剥离序列化负担，直接交由 DevTools 原生审查，突破隐藏私有字段盲区
+- **组件方法快捷调用**：组件展开区列出公开零参数方法，点击 `method()` 即在当前预览运行时调用；私有方法、有参数方法和 Cocos 基础组件方法不会展示。
+- **组件 JSON 与真实实例调试**：点击组件 🖨️ 图标会打印对象及规避循环引用后的 JSON、写入剪贴板，并把真实实例保存到预览 DevTools 的 `$mcpComp`。
+- **节点对象直连控制台**：点击节点基础属性区右上角的 🖨️ 图标，会打印整个实例并保存到预览 DevTools 的 `$mcpNode`，突破隐藏私有字段盲区。
 - **Button Click Events 检查器**：完整展示多个点击事件的 Target、Component、Handler 与 CustomEventData；可临时高亮 Target、打开绑定脚本、在 Sources 中定位 Handler、单独触发某个 Handler，或模拟完整 Button 点击。
 - **脚本双通道直开**：自定义组件脚本可直接交给代码编辑器，也可依据 AssetDB 返回的真实 `.ts` / `.js` 文件名在内嵌 DevTools Sources 中打开。
 - **编辑器节点还原**：运行时节点可回到编辑器场景；Prefab 子节点通过资源 UUID 与子索引路径还原，仅在还原成功后执行节点选中。
-- **uuidLookup 可选联动**：Prefab、组件脚本与资源引用可查询使用情况，未安装 uuidLookup 不影响核心检查能力。
+- **uuid_lookup 可选联动**：Prefab、组件脚本、单个/数组资源引用和内存资源榜单均可按类型打开或反查使用情况；未安装时“打开”自动降级为资源定位，不影响核心检查能力。
 
 
 ### 📉 内存剖析器
@@ -96,7 +99,7 @@ npm run build
 
 - **极值水位追踪**：实时记录每个 Bundle 的历史最高/最低内存，趋势箭头（↑↓）即时预警
 - **UUID 逆向解码**：自动将混淆的 UUID 还原为 `db://assets/textures/...` 可读路径
-- **一键资源定位 🎯**：点击即可在编辑器资源管理器中高亮对应文件
+- **资源联动 🎯 / ↗ / 🔎**：可在资源管理器定位、通过 uuid_lookup 按类型打开，或反查 Scene/Prefab/动画中的引用位置
 - **宏观内存汇总**：榜单头部实时聚合由底层探针累加的总体内存消耗
 
 ### 🩺 渲染调试器
