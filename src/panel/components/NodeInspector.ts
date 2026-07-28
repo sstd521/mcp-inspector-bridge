@@ -23,6 +23,7 @@ export const NodeInspector = {
     "component-method",
     "print-comp",
     "print-node",
+    "export-psd",
   ],
   template: `
         <div class="node-inspector-wrap" style="padding: 10px; overflow-y: auto; height: 100%; color: #d0d0d0;"
@@ -56,6 +57,7 @@ export const NodeInspector = {
                             <div class="header-right">
                                 <span @click.stop="$emit('locate-editor-node', nodeDetail)" title="在编辑器场景中定位节点" style="cursor: pointer; margin-right: 6px; color: var(--accent-blue);">📍</span>
                                 <span class="print-btn" @click.stop="onPrintNode" title="保存真实节点到 $mcpNode 并在控制台打印" style="cursor: pointer; margin-right: 6px;">🖨️</span>
+                                <span class="print-btn" @click.stop="onExportPsd" title="导出该节点及子树为 PSD 布局文件" style="cursor: pointer; margin-right: 6px;">📂</span>
                                 <span class="size-tag" style="background: rgba(0,0,0,0.3); border-color: transparent;">Node</span>
                             </div>
                         </div>
@@ -485,6 +487,12 @@ export const NodeInspector = {
       }
     };
 
+    const onExportPsd = () => {
+      if (props.nodeDetail && props.nodeDetail.id) {
+        emit("export-psd", props.nodeDetail.id, props.nodeDetail.name);
+      }
+    };
+
     return {
       expandedComps,
       toggleComp,
@@ -496,6 +504,7 @@ export const NodeInspector = {
       onLocateAssetRef,
       onPrintComponent,
       onPrintNode,
+      onExportPsd,
     };
   },
 };

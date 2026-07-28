@@ -723,7 +723,8 @@
                             @open-component-source="onOpenComponentSource" @button-action="onButtonAction"
                             @component-method="onComponentMethod"
                             @query-uuid-usage="onQueryUuidUsage"
-                            @print-node="onPrintNode"></node-inspector>
+                            @print-node="onPrintNode" @export-psd="exportNodeAsPsd"></node-inspector>
+                            @locate-asset="onLocateAsset" @print-comp="onPrintComp"
                         <div v-show="isNodeTreeDragging" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 99;"></div>
                     </div>
                 </div>
