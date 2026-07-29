@@ -17,6 +17,7 @@ export function useGameView(
     let hasInitialRefreshed = false;
     let isEnvInitialized = false;
     let pendingRefresh = false;
+    let isWebviewDomReady = false;
 
     const executeMacro = (command: string) => {
         const wv: any = gameView.value;
@@ -54,32 +55,139 @@ export function useGameView(
         }
     };
 
+    function logBridge(...args: any[]) {
+        console.log('[Bridge]', ...args);
+    }
+    function warnBridge(...args: any[]) {
+        console.warn('[Bridge]', ...args);
+    }
+
+    /**
+     * 检测 Web 平台 previewServer 是否已激活 /build/ 服务路由 (探针检测)
+     * 编辑器重启后，即使磁盘上有历史构建产物，也必须在当前会话中主动构建一次以启动 /build/ 的 Web 服务。
+     */
+    const checkBuildPackageAvailable = async () => {
+        const port = globalState.previewPort || 7456;
+        const testUrls = [
+            `http://localhost:${port}/build/index.html`,
+            `http://localhost:${port}/build/`
+        ];
+
+        let isServiceActive = false;
+        logBridge(`开始发送 HTTP 探针检测 Build Web 服务路由是否已被编辑器激活...`);
+
+        for (const testUrl of testUrls) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 2000);
+                const resp = await fetch(testUrl, { method: 'GET', signal: controller.signal });
+                clearTimeout(timeoutId);
+
+                if (resp.status >= 200 && resp.status < 400) {
+                    const text = await resp.text();
+                    const isCannotGet = text.includes('Cannot GET') || text.includes('404 Not Found') || text.includes('<title>404</title>');
+                    const isPreviewFallback = text.includes('preview-scripts') || text.includes('Cocos Creator | Preview');
+                    const hasBuildSignature = text.includes('GameCanvas') || text.includes('cocos2d-js') || text.includes('style-mobile') || text.includes('style-desktop') || text.includes('GameDiv') || text.includes('Cocos2dGameContainer');
+
+                    if (!isCannotGet && !isPreviewFallback && hasBuildSignature) {
+                        isServiceActive = true;
+                        logBridge(`Build Web 服务路线确认已在端口 ${port} 上成功激活: ${testUrl}`);
+                        break;
+                    } else {
+                        logBridge(`探针返回页面未包含有效 Build 签名 (isCannotGet: ${isCannotGet}, isPreviewFallback: ${isPreviewFallback}, hasBuildSignature: ${hasBuildSignature})`);
+                    }
+                }
+            } catch (e: any) {
+                logBridge(`Build Web 服务探针请求未响应: ${e.message}`);
+            }
+        }
+
+        globalState.isBuildPackageFound = isServiceActive;
+        logBridge(`checkBuildPackageAvailable 最终判定结果 | Build Web 服务激活状态: ${globalState.isBuildPackageFound}`);
+    };
+
+    /**
+     * 刷新游戏视图
+     * 根据当前 runMode 动态计算 targetUrl 并设置 webviewSrc
+     */
     function refreshGame() {
-        if (!globalState.isEditorSceneActive) {
-            console.warn('[Bridge] 场景未激活，刷新操作暂被拦截以防报错。');
+        logBridge(`refreshGame 触发 | 模式: ${globalState.runMode} | 场景激活: ${globalState.isEditorSceneActive} | 端口: ${globalState.previewPort}`);
+        if (globalState.runMode === 'preview' && !globalState.isEditorSceneActive) {
+            warnBridge('预览模式下场景未激活，刷新操作暂被拦截以防报错。');
             return;
         }
 
         const wv: any = gameView.value;
+        logBridge(`webview 实例状态: ${!!wv} | clientWidth: ${wv ? wv.clientWidth : 0} | clientHeight: ${wv ? wv.clientHeight : 0}`);
+
         if (wv && (wv.clientWidth === 0 || wv.clientHeight === 0)) {
-            console.log('[Bridge] 面板处于后台或可见区域为零，当前刷新请求已被防黑屏机制挂起 (Pending Refresh)...');
+            logBridge('面板处于后台或可见区域为零，已挂起并启动 300ms 自动重试...');
             pendingRefresh = true;
+            setTimeout(() => {
+                if (pendingRefresh) {
+                    refreshGame();
+                }
+            }, 300);
             return;
         }
 
-        console.log('[Bridge] 触发手动刷新重载游戏视图...');
         pendingRefresh = false;
-
         globalState.isGamePaused = false;
         globalState.nodeTree = null;
         globalState.lastTreeUpdate = 0;
 
-        if (!globalState.webviewSrc || !globalState.webviewSrc.includes('localhost:')) {
-            globalState.webviewSrc = `http://localhost:${globalState.previewPort}`;
-        } else if (wv && typeof wv.reload === 'function') {
-            try { wv.reload(); } catch (e) { }
+        let targetUrl = `http://localhost:${globalState.previewPort}`;
+        if (globalState.runMode === 'build') {
+            targetUrl = `http://localhost:${globalState.previewPort}/build/`;
+            checkBuildPackageAvailable();
+        } else if (globalState.runMode === 'custom' && globalState.customUrl) {
+            targetUrl = globalState.customUrl;
+        }
+
+        logBridge(`更新 webviewSrc 为: ${targetUrl}`);
+        globalState.webviewSrc = targetUrl;
+        if (wv) {
+            try {
+                if (isWebviewDomReady && typeof wv.loadURL === 'function') {
+                    logBridge(`调用 wv.loadURL(${targetUrl})`);
+                    wv.loadURL(targetUrl);
+                } else if (typeof wv.reload === 'function' && wv.src === targetUrl) {
+                    logBridge('调用 wv.reload()');
+                    wv.reload();
+                } else {
+                    logBridge(`安全赋值 wv.src = ${targetUrl}`);
+                    wv.src = targetUrl;
+                }
+            } catch (e: any) {
+                warnBridge('执行 webview 加载出现异常:', e.message);
+                try { wv.src = targetUrl; } catch (err) {}
+            }
         }
     }
+
+    let modeSwitchTimer: any = null;
+    /**
+     * 切换运行模式 (带有 300ms 防抖重置与 500ms 完成保护)
+     * @param newMode 目标运行模式 ('preview' | 'build' | 'custom')
+     */
+    const switchRunMode = (newMode: 'preview' | 'build' | 'custom') => {
+        logBridge(`switchRunMode 触发 | 目标模式: ${newMode}`);
+        globalState.isSwitchingMode = true;
+        globalState.runMode = newMode;
+        globalState.nodeTree = null;
+        globalState.nodeDetail = null;
+
+        const wv: any = gameView.value;
+        if (wv && typeof wv.stop === 'function') {
+            try { wv.stop(); } catch (e) { }
+        }
+
+        if (modeSwitchTimer) clearTimeout(modeSwitchTimer);
+        modeSwitchTimer = setTimeout(() => {
+            refreshGame();
+            setTimeout(() => { globalState.isSwitchingMode = false; }, 500);
+        }, 300);
+    };
 
     const togglePause = () => { globalState.isGamePaused = !globalState.isGamePaused; executeMacro('pause'); };
     const stepGame = () => { globalState.isGamePaused = true; executeMacro('step'); };
@@ -729,10 +837,25 @@ export function useGameView(
             }) as EventListener);
 
             gameViewDynamic.addEventListener('did-start-loading', () => {
+                logBridge('webview 开始加载 (did-start-loading)...');
                 isRecording.value = false;
             });
 
+            gameViewDynamic.addEventListener('did-finish-load', () => {
+                logBridge('webview 完成加载 (did-finish-load)');
+            });
+
+            gameViewDynamic.addEventListener('did-fail-load', (e: any) => {
+                warnBridge(`webview 加载失败 (did-fail-load): code=${e.errorCode}, desc=${e.errorDescription}, url=${e.validatedURL}`);
+            });
+
+            gameViewDynamic.addEventListener('did-navigate', (e: any) => {
+                logBridge(`webview 页面导航至: ${e.url}`);
+            });
+
             gameViewDynamic.addEventListener('dom-ready', () => {
+                isWebviewDomReady = true;
+                logBridge('webview DOM 就绪 (dom-ready)');
                 if (isAudioMuted.value && typeof gameViewDynamic.setAudioMuted === 'function') {
                     try { gameViewDynamic.setAudioMuted(isAudioMuted.value); } catch (e) { }
                 }
@@ -805,6 +928,8 @@ export function useGameView(
         isRecording,
         startRecord,
         stopRecord,
-        setupGameViewListeners
+        setupGameViewListeners,
+        switchRunMode,
+        checkBuildPackageAvailable
     };
 }

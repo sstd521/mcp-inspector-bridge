@@ -8,6 +8,8 @@ import { initMemory } from './memory';
 import { initRenderDebugger } from './render-debugger';
 import { initPicker } from './picker';
 
+import { getCcEngine } from './engine-helper';
+
 (function () {
     // 幂等性防护：防止 webview 刷新后探针被重复注入导致定时器累积
     if (window.__mcpProbeInitialized) {
@@ -27,10 +29,12 @@ import { initPicker } from './picker';
 
     function initProbe() {
         try {
-            if (typeof cc === 'undefined' || !cc.director || !cc.director.getScene()) {
+            const ccEng = getCcEngine();
+            if (!ccEng || !ccEng.director || !ccEng.director.getScene()) {
                 setTimeout(initProbe, 500);
                 return;
             }
+            const cc = ccEng;
 
             window.__mcpGetEnvInfo = function () {
                 const info: any = {

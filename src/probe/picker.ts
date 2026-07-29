@@ -1,5 +1,7 @@
 // @ts-nocheck
 import { Logger } from './logger';
+import { getCcEngine } from './engine-helper';
+
 export function initPicker() {
     window.__mcpNodePicker = {
         isActive: false,
@@ -139,7 +141,7 @@ export function initPicker() {
         },
 
         hitTest: function (clientX, clientY) {
-            const eng = window.cc;
+            const eng = getCcEngine();
             if (!eng || !eng.director || !eng.view) return null;
             const scene = eng.director.getScene();
             if (!scene) return null;

@@ -57,8 +57,9 @@ function initVisualFeedbackStyle() {
 function getComponentClassName(comp) {
     if (!comp) return "UnknownComponent";
     let cname = "UnknownComponent";
-    if (window.cc && window.cc.js && typeof window.cc.js.getClassName === 'function') {
-        cname = window.cc.js.getClassName(comp);
+    const ccEng = safeGetCcEngine();
+    if (ccEng && ccEng.js && typeof ccEng.js.getClassName === 'function') {
+        cname = ccEng.js.getClassName(comp);
     }
     if (!cname) {
         cname = comp.name || (comp.constructor ? comp.constructor.name : "UnknownComponent");
@@ -70,7 +71,7 @@ function getComponentClassName(comp) {
 export function initCrawler() {
     window.__mcpCrawler = {
         findNodeByUuid: function (uuid, root) {
-            const eng = window.cc;
+            const eng = safeGetCcEngine();
             if (!eng || !eng.director) return null;
             const startNode = root || eng.director.getScene();
             if (!startNode) return null;
@@ -85,7 +86,8 @@ export function initCrawler() {
             const node = this.findNodeByUuid(uuid);
             if (!node) return null;
 
-            if (typeof window.cc !== 'undefined' && node instanceof window.cc.Scene) {
+            const ccEng = safeGetCcEngine();
+            if (ccEng && node instanceof ccEng.Scene) {
                 return {
                     id: node.uuid || node.id,
                     name: node.name,
@@ -796,18 +798,108 @@ export function initCrawler() {
                 }
             }
 
+            // 动态获取 Spine 骨骼动画顶点的真实世界 AABB 包围盒
+            function getSpineWorldBounds(node) {
+                const eng = window.cc;
+                const spineComp = node.getComponent(eng.sp ? eng.sp.Skeleton : null) || 
+                                  node.getComponent(eng.dragonBones ? eng.dragonBones.ArmatureDisplay : null);
+                if (!spineComp) return null;
+
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                try {
+                    if (typeof spineComp._updateRenderData === 'function') {
+                        spineComp._updateRenderData();
+                    }
+                    
+                    const skel = spineComp._skeleton;
+                    if (skel && skel.slots) {
+                        for (let i = 0; i < skel.slots.length; i++) {
+                            const slot = skel.slots[i];
+                            if (!slot || (slot.bone && slot.bone.active === false)) continue;
+                            const attachment = slot.getAttachment ? slot.getAttachment() : slot.attachment;
+                            if (!attachment) continue;
+                            
+                            let verts = new Float32Array(8);
+                            if (typeof attachment.computeWorldVertices === 'function') {
+                                attachment.computeWorldVertices(slot, 0, 8, verts, 0, 2);
+                                for (let j = 0; j < verts.length; j += 2) {
+                                    const vx = verts[j];
+                                    const vy = verts[j + 1];
+                                    if (!isNaN(vx) && !isNaN(vy) && isFinite(vx) && isFinite(vy)) {
+                                        minX = Math.min(minX, vx);
+                                        maxX = Math.max(maxX, vx);
+                                        minY = Math.min(minY, vy);
+                                        maxY = Math.max(maxY, vy);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch(e) {}
+
+                if (minX < maxX && minY < maxY && isFinite(minX) && isFinite(maxX)) {
+                    const blWorld = node.convertToWorldSpaceAR(eng.v2(minX, minY));
+                    const trWorld = node.convertToWorldSpaceAR(eng.v2(maxX, maxY));
+                    const brWorld = node.convertToWorldSpaceAR(eng.v2(maxX, minY));
+                    const tlWorld = node.convertToWorldSpaceAR(eng.v2(minX, maxY));
+                    
+                    const wx = Math.min(blWorld.x, trWorld.x, brWorld.x, tlWorld.x);
+                    const wy = Math.min(blWorld.y, trWorld.y, brWorld.y, tlWorld.y);
+                    const ww = Math.max(blWorld.x, trWorld.x, brWorld.x, tlWorld.x) - wx;
+                    const wh = Math.max(blWorld.y, trWorld.y, brWorld.y, tlWorld.y) - wy;
+                    return new eng.Rect(wx, wy, ww, wh);
+                }
+
+                if (typeof node.getBoundingBoxToWorld === 'function') {
+                    try {
+                        const box = node.getBoundingBoxToWorld();
+                        if (box && box.width > 2 && box.height > 2) return box;
+                    } catch(e) {}
+                }
+                return null;
+            }
+
             // 1. 局部 AABB 包围盒计算（转换为 PSD 相对坐标系，支持相对角度和缩放提取）
             function getRelativeTransform(node) {
+                const eng = window.cc;
+                const spineComp = node.getComponent(eng.sp ? eng.sp.Skeleton : null) || 
+                                  node.getComponent(eng.dragonBones ? eng.dragonBones.ArmatureDisplay : null);
+                
+                // 对 Spine 骨骼动画节点优先计算渲染世界包围盒，获取真正包含全身体态的宽高与坐标
+                if (spineComp) {
+                    const wBox = getSpineWorldBounds(node);
+                    if (wBox && wBox.width > 2 && wBox.height > 2) {
+                        const blWorld = eng.v2(wBox.x, wBox.y);
+                        const trWorld = eng.v2(wBox.x + wBox.width, wBox.y + wBox.height);
+                        const blLocal = rootNode.convertToNodeSpaceAR(blWorld);
+                        const trLocal = rootNode.convertToNodeSpaceAR(trWorld);
+                        const toPsd = (pt) => ({
+                            x: pt.x + rootAnchorX * rootWidth,
+                            y: rootHeight - (pt.y + rootAnchorY * rootHeight)
+                        });
+                        const blPsd = toPsd(blLocal);
+                        const trPsd = toPsd(trLocal);
+                        const left = Math.min(blPsd.x, trPsd.x);
+                        const top = Math.min(blPsd.y, trPsd.y);
+                        const right = Math.max(blPsd.x, trPsd.x);
+                        const bottom = Math.max(blPsd.y, trPsd.y);
+
+                        return {
+                            box: {
+                                left: Math.round(left),
+                                top: Math.round(top),
+                                width: Math.round(Math.max(1, right - left)),
+                                height: Math.round(Math.max(1, bottom - top))
+                            },
+                            angle: 0,
+                            scaleX: 1,
+                            scaleY: 1
+                        };
+                    }
+                }
+
                 let width = node.width || 0;
                 let height = node.height || 0;
-
-                // 兼容 Sprite 的 SizeMode 实际渲染宽高：如果在 TRIMMED 或 RAW 模式，用图片原始宽高计算包围盒，防止裁剪
-                const sprite = node.getComponent(window.cc.Sprite);
-                if (sprite && sprite.spriteFrame && (sprite.sizeMode === 1 || sprite.sizeMode === 2)) {
-                    const originalSize = sprite.spriteFrame.getOriginalSize();
-                    width = originalSize.width;
-                    height = originalSize.height;
-                }
 
                 const ax = node.anchorX !== undefined ? node.anchorX : 0.5;
                 const ay = node.anchorY !== undefined ? node.anchorY : 0.5;
@@ -817,7 +909,6 @@ export function initCrawler() {
                 const ptBottom = -ay * height;
                 const ptTop = (1 - ay) * height;
 
-                const eng = window.cc;
                 const bl = node.convertToWorldSpaceAR(eng.v2(ptLeft, ptBottom));
                 const br = node.convertToWorldSpaceAR(eng.v2(ptRight, ptBottom));
                 const tr = node.convertToWorldSpaceAR(eng.v2(ptRight, ptTop));
@@ -937,8 +1028,10 @@ export function initCrawler() {
                     tempCtx.restore();
                 } else {
                     // 如果不使用 trim，直接渲染原图切片本身，不补充 transparent 外边距
-                    const rectW = Math.max(2, rect.width) || 2;
-                    const rectH = Math.max(2, rect.height) || 2;
+                    const unrotatedW = rotated ? rect.height : rect.width;
+                    const unrotatedH = rotated ? rect.width : rect.height;
+                    const rectW = Math.max(2, unrotatedW) || 2;
+                    const rectH = Math.max(2, unrotatedH) || 2;
                     tempCanvas.width = rectW;
                     tempCanvas.height = rectH;
 
@@ -946,7 +1039,6 @@ export function initCrawler() {
                     if (rotated) {
                         tempCtx.translate(rectW / 2, rectH / 2);
                         tempCtx.rotate(-Math.PI / 2);
-                        // 修正：无论旋转与否，在图集中裁剪的原始尺寸都是 rect.width 和 rect.height
                         tempCtx.drawImage(img, rect.x, rect.y, rect.width, rect.height, -rect.height / 2, -rect.width / 2, rect.height, rect.width);
                     } else {
                         tempCtx.drawImage(img, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
@@ -971,56 +1063,98 @@ export function initCrawler() {
                 const ay = sprite.node.anchorY;
                 ctx.globalAlpha = (sprite.node.opacity !== undefined ? sprite.node.opacity : 255) / 255;
                 
-                let drawW = sprite.node.width;
-                let drawH = sprite.node.height;
+                const drawW = sprite.node.width;
+                const drawH = sprite.node.height;
 
-                // 如果 sizeMode 是 TRIMMED 或 RAW，则使用图集定义的原始宽高防止拉伸变形
-                if (sprite.sizeMode === 1 || sprite.sizeMode === 2) {
-                    const originalSize = spriteFrame.getOriginalSize();
-                    drawW = originalSize.width;
-                    drawH = originalSize.height;
-                }
-
-                // 9宫格绘制辅助函数
+                // 9宫格绘制辅助函数 (带 Trim 透明边距扣除与 1px 纯色采样)
                 function drawNineSlice(targetCtx, srcCanvas, w, h, ax, ay, insetL, insetR, insetT, insetB) {
                     const imgW = srcCanvas.width;
                     const imgH = srcCanvas.height;
-                    const x = -ax * w;
-                    const y = -(1 - ay) * h;
+                    const x0 = -ax * w;
+                    const y0 = -(1 - ay) * h;
 
-                    const sL = insetL;
-                    const sR = insetR;
-                    const sT = insetT;
-                    const sB = insetB;
-                    const sMidW = imgW - sL - sR;
-                    const sMidH = imgH - sT - sB;
+                    // 计算因图集 Trim 产生的左/右/上/下透明偏移，修正物理切片 inset
+                    const trimLeft = Math.max(0, originalSize.width / 2 - rect.width / 2 + offset.x);
+                    const trimRight = Math.max(0, originalSize.width / 2 - rect.width / 2 - offset.x);
+                    const trimTop = Math.max(0, originalSize.height / 2 - rect.height / 2 - offset.y);
+                    const trimBottom = Math.max(0, originalSize.height / 2 - rect.height / 2 + offset.y);
 
-                    const dL = sL;
-                    const dR = sR;
-                    const dT = sT;
-                    const dB = sB;
-                    const dMidW = w - dL - dR;
-                    const dMidH = h - dT - dB;
+                    const effectiveInsetL = Math.max(0, insetL - trimLeft);
+                    const effectiveInsetR = Math.max(0, insetR - trimRight);
+                    const effectiveInsetT = Math.max(0, insetT - trimTop);
+                    const effectiveInsetB = Math.max(0, insetB - trimBottom);
 
-                    const drawPart = (sx, sy, sw, sh, dx, dy, dw, dh) => {
-                        if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
-                        targetCtx.drawImage(srcCanvas, sx, sy, sw, sh, dx, dy, dw, dh);
-                    };
+                    let sL = effectiveInsetL;
+                    let sR = effectiveInsetR;
+                    if (sL + sR >= imgW && (sL + sR) > 0) {
+                        const ratio = imgW / (sL + sR);
+                        sL = Math.floor(sL * ratio);
+                        sR = imgW - sL;
+                    }
+                    const srcX0 = 0;
+                    const srcX1 = sL;
+                    const srcX2 = Math.max(sL, imgW - sR);
+                    const srcX3 = imgW;
 
-                    // Top row
-                    drawPart(0, 0, sL, sT, x, y, dL, dT); // Top-Left
-                    drawPart(sL, 0, sMidW, sT, x + dL, y, dMidW, dT); // Top-Center
-                    drawPart(imgW - sR, 0, sR, sT, x + w - dR, y, dR, dT); // Top-Right
+                    let sT = effectiveInsetT;
+                    let sB = effectiveInsetB;
+                    if (sT + sB >= imgH && (sT + sB) > 0) {
+                        const ratio = imgH / (sT + sB);
+                        sT = Math.floor(sT * ratio);
+                        sB = imgH - sT;
+                    }
+                    const srcY0 = 0;
+                    const srcY1 = sT;
+                    const srcY2 = Math.max(sT, imgH - sB);
+                    const srcY3 = imgH;
 
-                    // Middle row
-                    drawPart(0, sT, sL, sMidH, x, y + dT, dL, dMidH); // Middle-Left
-                    drawPart(sL, sT, sMidW, sMidH, x + dL, y + dT, dMidW, dMidH); // Center
-                    drawPart(imgW - sR, sT, sR, sMidH, x + w - dR, y + dT, dR, dMidH); // Middle-Right
+                    let dL = insetL;
+                    let dR = insetR;
+                    if (dL + dR > w && (dL + dR) > 0) {
+                        const ratio = w / (dL + dR);
+                        dL = dL * ratio;
+                        dR = w - dL;
+                    }
+                    const dstX0 = x0;
+                    const dstX1 = x0 + dL;
+                    const dstX2 = x0 + w - dR;
+                    const dstX3 = x0 + w;
 
-                    // Bottom row
-                    drawPart(0, imgH - sB, sL, sB, x, y + h - dB, dL, dB); // Bottom-Left
-                    drawPart(sL, imgH - sB, sMidW, sB, x + dL, y + h - dB, dMidW, dB); // Bottom-Center
-                    drawPart(imgW - sR, imgH - sB, sR, sB, x + w - dR, y + h - dB, dR, dB); // Bottom-Right
+                    let dT = insetT;
+                    let dB = insetB;
+                    if (dT + dB > h && (dT + dB) > 0) {
+                        const ratio = h / (dT + dB);
+                        dT = dT * ratio;
+                        dB = h - dT;
+                    }
+                    const dstY0 = y0;
+                    const dstY1 = y0 + dT;
+                    const dstY2 = y0 + h - dB;
+                    const dstY3 = y0 + h;
+
+                    const sXs = [[srcX0, srcX1], [srcX1, Math.max(srcX1 + 1, srcX2)], [srcX2, srcX3]];
+                    const sYs = [[srcY0, srcY1], [srcY1, Math.max(srcY1 + 1, srcY2)], [srcY2, srcY3]];
+                    const dXs = [[dstX0, dstX1], [dstX1, dstX2], [dstX2, dstX3]];
+                    const dYs = [[dstY0, dstY1], [dstY1, dstY2], [dstY2, dstY3]];
+
+                    for (let row = 0; row < 3; row++) {
+                        const [sy1, sy2] = sYs[row];
+                        const [dy1, dy2] = dYs[row];
+                        const sh = sy2 - sy1;
+                        const dh = dy2 - dy1;
+                        if (sh <= 0 || dh <= 0) continue;
+
+                        for (let col = 0; col < 3; col++) {
+                            const [sx1, sx2] = sXs[col];
+                            const [dx1, dx2] = dXs[col];
+                            const sw = sx2 - sx1;
+                            const dw = dx2 - dx1;
+
+                            if (sw > 0 && dw > 0) {
+                                targetCtx.drawImage(srcCanvas, sx1, sy1, sw, sh, dx1, dy1, dw, dh);
+                            }
+                        }
+                    }
                 }
 
                 const isSliced = sprite.type === 1; // 1 为 cc.Sprite.Type.SLICED
@@ -1164,8 +1298,30 @@ export function initCrawler() {
             // 3.5 Skeletal 骨骼动画 (Spine/DragonBones) 节点相机截图
             function rasterizeSkeletal(node, transform) {
                 const eng = window.cc;
-                const width = Math.max(2, Math.round(node.width)) || 2;
-                const height = Math.max(2, Math.round(node.height)) || 2;
+                const spineComp = node.getComponent(eng.sp ? eng.sp.Skeleton : null) || 
+                                  node.getComponent(eng.dragonBones ? eng.dragonBones.ArmatureDisplay : null);
+                
+                // 1. 强制更新骨骼姿态 RenderData
+                if (spineComp) {
+                    if (typeof spineComp._updateRenderData === 'function') {
+                        try { spineComp._updateRenderData(); } catch(e) {}
+                    }
+                }
+
+                // 2. 获取真实世界包围盒
+                let wBox = null;
+                if (typeof node.getBoundingBoxToWorld === 'function') {
+                    try { wBox = node.getBoundingBoxToWorld(); } catch(e) {}
+                }
+                if (!wBox || wBox.width <= 2 || wBox.height <= 2) {
+                    const w = Math.max(2, Math.round(node.width)) || 100;
+                    const h = Math.max(2, Math.round(node.height)) || 100;
+                    const worldPos = node.convertToWorldSpaceAR(eng.v2(0, 0));
+                    wBox = new eng.Rect(worldPos.x - w / 2, worldPos.y - h / 2, w, h);
+                }
+
+                const width = Math.max(2, Math.round(wBox.width));
+                const height = Math.max(2, Math.round(wBox.height));
 
                 const scene = eng.director.getScene();
                 if (!scene) return null;
@@ -1173,16 +1329,18 @@ export function initCrawler() {
                 let cameraNode = null;
                 let rt = null;
                 try {
-                    cameraNode = new eng.Node();
-                    node.addChild(cameraNode);
+                    // 挂载在 scene 根节点下的独立世界坐标系相机，消除父节点 scale / anchor 偏移打乱
+                    cameraNode = new eng.Node('__mcp_temp_spine_camera');
+                    scene.addChild(cameraNode);
 
-                    const ax = node.anchorX !== undefined ? node.anchorX : 0.5;
-                    const ay = node.anchorY !== undefined ? node.anchorY : 0.5;
-                    cameraNode.setPosition((0.5 - ax) * width, (0.5 - ay) * height);
+                    const worldCenterX = wBox.x + wBox.width / 2;
+                    const worldCenterY = wBox.y + wBox.height / 2;
+                    cameraNode.setPosition(worldCenterX, worldCenterY);
 
                     const camera = cameraNode.addComponent(eng.Camera);
                     camera.ortho = true;
                     camera.orthoSize = height / 2;
+                    camera.cullingMask = 0xffffffff;
                     camera.clearFlags = eng.Camera.ClearFlags.COLOR;
                     camera.backgroundColor = new eng.Color(0, 0, 0, 0);
 
@@ -1190,11 +1348,24 @@ export function initCrawler() {
                     rt.initWithSize(width, height);
                     camera.targetTexture = rt;
 
-                    // 立即手动渲染该节点及其子树
+                    // 手动渲染该节点及其子树
                     camera.render(node);
 
                     const pixels = rt.readPixels();
                     if (!pixels || pixels.length === 0) return null;
+
+                    // 检查像素数组是否全为透明全零
+                    let hasAlpha = false;
+                    for (let i = 3; i < pixels.length; i += 4) {
+                        if (pixels[i] > 0) {
+                            hasAlpha = true;
+                            break;
+                        }
+                    }
+
+                    if (!hasAlpha) {
+                        return null;
+                    }
 
                     const canvas = document.createElement('canvas');
                     canvas.width = width;
@@ -1258,7 +1429,7 @@ export function initCrawler() {
                     }
                 }
 
-                if (hasChildren) {
+                if (hasChildren && !isSkeletal) {
                     // 为容器节点创建组文件夹
                     results.push({
                         name: node.name,
@@ -1268,13 +1439,11 @@ export function initCrawler() {
                         visible: node.active !== false
                     });
 
-                    // 如果容器节点自身带有 Sprite、Label 或 Skeletal，作为背景/内容图层插入到该组文件夹最底层
-                    if (sprite || label || isSkeletal) {
+                    // 如果容器节点自身带有 Sprite 或 Label，作为背景/内容图层插入到该组文件夹最底层
+                    if (sprite || label) {
                         const transform = getRelativeTransform(node);
                         let imgBase64 = null;
-                        if (isSkeletal) {
-                            try { imgBase64 = rasterizeSkeletal(node, transform); } catch(e) {}
-                        } else if (sprite) {
+                        if (sprite) {
                             try { imgBase64 = rasterizeSprite(sprite, transform); } catch(e) {}
                         } else if (label) {
                             try { imgBase64 = rasterizeLabel(label, transform); } catch(e) {}

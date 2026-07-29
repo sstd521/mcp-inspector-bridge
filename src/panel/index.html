@@ -467,6 +467,68 @@
         from { background-color: rgba(244, 67, 54, 0.9); }
         to { background-color: rgba(244, 67, 54, 0.4); }
     }
+
+    /* Build 未构建引导卡片样式 */
+    .build-empty-card {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 998;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        background: rgba(26, 26, 28, 0.92);
+        backdrop-filter: blur(6px);
+        color: #ddd;
+        padding: 20px;
+        box-sizing: border-box;
+        text-align: center;
+    }
+
+    .build-empty-card .empty-icon {
+        font-size: 48px;
+        margin-bottom: 12px;
+    }
+
+    .build-empty-card .empty-title {
+        font-size: 18px;
+        font-weight: bold;
+        color: #fff;
+        margin-bottom: 10px;
+    }
+
+    .build-empty-card .empty-desc {
+        font-size: 13px;
+        line-height: 1.6;
+        color: #aaa;
+        max-width: 360px;
+        background: #252526;
+        padding: 14px 18px;
+        border-radius: 6px;
+        border: 1px solid #3e3e3e;
+        margin-bottom: 16px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+
+    .build-empty-card .btn-primary {
+        background: #007acc;
+        color: #fff;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        font-size: 13px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: background 0.2s;
+        box-shadow: 0 2px 6px rgba(0, 122, 204, 0.4);
+    }
+
+    .build-empty-card .btn-primary:hover {
+        background: #0098ff;
+    }
 </style>
 
 <div id="app" v-cloak>
@@ -508,6 +570,14 @@
             </div>
             <!-- 分辨率与横竖屏分组 (保证自动换行时不被切割) -->
             <div style="display: flex; gap: 5px; flex: 1; min-width: 200px;">
+                <select :value="globalState.runMode" @change="switchRunMode($event.target.value)" class="truncate-text"
+                    style="background:#555; color:#fff; border:1px solid #777; padding:3px; outline:none; border-radius:3px;">
+                    <option value="preview">预览模式</option>
+                    <option value="build">Build 模式</option>
+                    <option value="custom">自定义页面</option>
+                </select>
+                <input v-if="globalState.runMode === 'custom'" v-model="globalState.customUrl" placeholder="http://... 或 file://..." @blur="refreshGame"
+                    style="background:#1e1e1e; color:#fff; border:1px solid #555; padding:3px 6px; outline:none; border-radius:3px; flex:1; min-width:100px;">
                 <select v-model="selectedResolution" class="truncate-text"
                     style="background:#555; color:#fff; border:1px solid #777; padding:3px; outline:none; border-radius:3px; flex: 1;">
                     <template v-for="group in resolutionOptions" :key="group.label || '__root'">
@@ -539,6 +609,17 @@
                 <!-- 拖动时的屏蔽罩，防止 webview 吞噬鼠标事件 -->
                 <div v-show="isDragging" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: transparent; z-index: 999;">
                 </div>
+            </div>
+
+            <!-- Build 未构建/Web服务未启动引导占位卡片 (在 Mount 容器层居中叠加，不受分辨率 transform scale 缩放影响) -->
+            <div v-if="globalState.runMode === 'build' && !globalState.isBuildPackageFound" class="build-empty-card">
+                <div class="empty-icon">⚠️</div>
+                <div class="empty-title">Web 构建服务未启动</div>
+                <div class="empty-desc">
+                    编辑器重启后，必须在当前编辑器会话中完成一次 Web 平台构建，才能启动 Build 模式的 Web 服务。<br>
+                    请在 Cocos Creator 菜单中打开 <b>项目 -> 构建发布</b> 并完成一次构建。
+                </div>
+                <button class="btn-primary" @click="checkBuildPackageAvailable">🔄 重新检测 Web 服务</button>
             </div>
 
             <!-- 性能数据叠加框：插件渲染，跟随面板缩放，高分辨率下清晰可读 -->
@@ -682,7 +763,7 @@
                         @mousedown="startNodeTreeDrag" title="拖拉调整侧栏尺寸"></div>
 
                     <div
-                        style="flex: 1; overflow-y: auto; background: var(--bg-main); min-width: 0; min-height: 0; position: relative; padding: 10px;">
+                        style="flex: 1; overflow: hidden; background: var(--bg-main); min-width: 0; min-height: 0; position: relative;">
                         <node-inspector :node-detail="globalState.nodeDetail" @update-prop="onUpdateNodeProp"
                             @hover-change="globalState.isInspectorHovered = $event" @focus-change="globalState.isInspectorFocused = $event" @locate-node="onLocateNode"
                             @locate-asset="onLocateAsset" @print-comp="onPrintComp"
@@ -718,7 +799,7 @@
             </div>
 
             <!-- Tab 2/3: 辅助页 -->
-            <div v-show="activeTab === 2" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; padding: 25px; overflow-y: auto; background: #1a1a1a;">
+            <div v-show="activeTab === 2" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; padding: 15px 20px 40px 20px; box-sizing: border-box; overflow-y: auto; overflow-x: hidden; background: #1a1a1a;">
                 <h2 style="margin: 0 0 8px 0; color: #fff; font-size: calc(var(--base-font-size, 13px) + 9px);">Cocos 引擎运行环境调试面板</h2>
                 <div style="color: #aaa; margin-bottom: 25px; font-size: calc(var(--base-font-size, 13px) - 1px);">实时展示引擎核心系统运行参数与状态</div>
                 
@@ -760,7 +841,7 @@
                                     <span v-else>📸 提取图集</span>
                                 </button>
                             </div>
-                            <div style="display: grid; grid-template-columns: 1fr 1.5fr 1.5fr 1fr 1fr; gap: 15px;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px;">
                                 <div>
                                     <div style="color: #888; font-size: calc(var(--base-font-size, 13px) - 2px); margin-bottom: 6px;">动态图集引擎</div>
                                     <div :style="{display:'inline-block', padding:'2px 6px', borderRadius:'4px', fontSize:'calc(var(--base-font-size, 13px) - 3px)', background: globalState.cocosInfo.dynamicAtlas.enabled ? 'rgba(76,175,80,0.2)' : 'rgba(244,67,54,0.2)', color: globalState.cocosInfo.dynamicAtlas.enabled ? '#4caf50' : '#f44336'}">{{ globalState.cocosInfo.dynamicAtlas.enabled }}</div>
@@ -813,7 +894,7 @@
 
                         <div v-if="globalState.cocosInfo.downloader" style="margin-left: 10px;">
                             <div style="color: #e0e0e0; font-size: var(--base-font-size, 13px); margin-bottom: 10px;">[网络] 下载器配置</div>
-                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px;">
                                 <div>
                                     <div style="color: #888; font-size: calc(var(--base-font-size, 13px) - 2px); margin-bottom: 6px;">下载器并发数</div>
                                     <div style="color: #eee; font-size: var(--base-font-size, 13px);">{{ globalState.cocosInfo.downloader.maxConcurrency }}</div>
@@ -836,7 +917,7 @@
                         
                         <div v-if="globalState.cocosInfo.physics" style="margin-left: 10px; margin-bottom: 20px;">
                             <div style="color: #e0e0e0; font-size: var(--base-font-size, 13px); margin-bottom: 10px;">[2D物理] 配置参数</div>
-                            <div style="display: grid; grid-template-columns: 1fr 1.5fr 1fr 1fr 1fr; gap: 15px;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px;">
                                 <div>
                                     <div style="color: #888; font-size: calc(var(--base-font-size, 13px) - 2px); margin-bottom: 6px;">启用状态</div>
                                     <div :style="{display:'inline-block', padding:'2px 6px', borderRadius:'4px', fontSize:'calc(var(--base-font-size, 13px) - 3px)', background: globalState.cocosInfo.physics.enabled ? 'rgba(76,175,80,0.2)' : 'rgba(244,67,54,0.2)', color: globalState.cocosInfo.physics.enabled ? '#4caf50' : '#f44336'}">{{ globalState.cocosInfo.physics.enabled }}</div>
@@ -894,7 +975,7 @@
 
                         <div v-if="globalState.cocosInfo.collision" style="margin-left: 10px;">
                             <div style="color: #e0e0e0; font-size: var(--base-font-size, 13px); margin-bottom: 10px;">[碰撞器] 配置参数</div>
-                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px;">
                                 <div>
                                     <div style="color: #888; font-size: calc(var(--base-font-size, 13px) - 2px); margin-bottom: 6px;">启用状态</div>
                                     <div :style="{display:'inline-block', padding:'2px 6px', borderRadius:'4px', fontSize:'calc(var(--base-font-size, 13px) - 3px)', background: globalState.cocosInfo.collision.enabled ? 'rgba(76,175,80,0.2)' : 'rgba(244,67,54,0.2)', color: globalState.cocosInfo.collision.enabled ? '#4caf50' : '#f44336'}">{{ globalState.cocosInfo.collision.enabled }}</div>

@@ -227,21 +227,44 @@ export function useLayout(globalState: any, wrapMount: any, wrapperSize: any) {
     });
 
     const gameContainerStyle = computed(() => {
-        if (selectedResolution.value === 'FIT' || wrapperSize.value.width === 0) {
+        if (selectedResolution.value === 'FIT') {
             return { width: '100%', height: '100%', position: 'relative', overflow: 'hidden' };
         }
+
+        let containerW = wrapperSize.value.width;
+        let containerH = wrapperSize.value.height;
+
+        if (containerW === 0 || containerH === 0) {
+            const wrapEl = wrapMount.value || (typeof document !== 'undefined' ? document.getElementById('game-mount-wrap') : null);
+            if (wrapEl && wrapEl.clientWidth > 0 && wrapEl.clientHeight > 0) {
+                containerW = wrapEl.clientWidth;
+                containerH = wrapEl.clientHeight;
+                wrapperSize.value.width = containerW;
+                wrapperSize.value.height = containerH;
+            }
+        }
+
+        if (containerW === 0 || containerH === 0) {
+            return { width: '100%', height: '100%', position: 'relative', overflow: 'hidden' };
+        }
+
         const parts = selectedResolution.value.split('x');
         let targetW = parseInt(parts[0]);
         let targetH = parseInt(parts[1]);
+
+        if (isNaN(targetW) || isNaN(targetH) || targetW <= 0 || targetH <= 0) {
+            return { width: '100%', height: '100%', position: 'relative', overflow: 'hidden' };
+        }
 
         if (isLandscape.value) {
             const tmp = targetW; targetW = targetH; targetH = tmp;
         }
 
-        const scale = Math.min(
-            (wrapperSize.value.width * 0.95) / targetW,
-            (wrapperSize.value.height * 0.95) / targetH
-        );
+        const scale = Math.max(0.05, Math.min(
+            (containerW * 0.95) / targetW,
+            (containerH * 0.95) / targetH
+        ));
+
 
         return {
             width: Math.floor(targetW) + 'px',
@@ -258,8 +281,13 @@ export function useLayout(globalState: any, wrapMount: any, wrapperSize: any) {
     const rotateScreen = () => { isLandscape.value = !isLandscape.value; };
 
     const setupResizeObserver = () => {
-        const wrap = wrapMount.value;
+        const wrap = wrapMount.value || (typeof document !== 'undefined' ? document.getElementById('game-mount-wrap') : null);
         if (wrap) {
+            if (wrap.clientWidth > 0 && wrap.clientHeight > 0) {
+                wrapperSize.value.width = wrap.clientWidth;
+                wrapperSize.value.height = wrap.clientHeight;
+                globalState.isNarrow = wrap.clientWidth < 500;
+            }
             try {
                 new ResizeObserver((entries: any) => {
                     window.requestAnimationFrame(() => {
@@ -415,6 +443,7 @@ export function useLayout(globalState: any, wrapMount: any, wrapperSize: any) {
     });
 
     return {
+        wrapMount,
         selectedResolution,
         isLandscape,
         resolutionOptions,

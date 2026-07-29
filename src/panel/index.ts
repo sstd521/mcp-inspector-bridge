@@ -12,6 +12,7 @@ const { useScriptSystem } = require('./composables/useScriptSystem');
 // 模块级引用，供 messages handlers 访问
 let _scriptSystem: any = null;
 let _refreshGameFn: (() => void) | null = null;
+let _gameViewSystem: any = null;
 
 const templateRaw = fs.readFileSync(path.join(__dirname, '../../src/panel/index.html'), 'utf-8');
 const preloadUrlResolved = 'file:///' + Editor.url('packages://mcp-inspector-bridge/dist/preload.js').replace(/\\/g, '/');
@@ -40,12 +41,14 @@ module.exports = Editor.Panel.extend({
 
     ready() {
         const panelAppElement = this.$app;
+        if (!panelAppElement) return;
 
-        const app = createApp({
-            components: { NodeTree, 'node-inspector': NodeInspector, 'render-debugger': RenderDebugger, 'script-manager': ScriptManager },
-            setup() {
-                const activeTab = ref(0);
-                const wrapperSize = ref({ width: 0, height: 0 });
+        try {
+            const app = createApp({
+                components: { NodeTree, 'node-inspector': NodeInspector, 'render-debugger': RenderDebugger, 'script-manager': ScriptManager },
+                setup() {
+                    const activeTab = ref(0);
+                    const wrapperSize = ref({ width: 0, height: 0 });
 
                 // Vue Refs
                 const gameView = ref(null);
@@ -117,6 +120,7 @@ module.exports = Editor.Panel.extend({
                 _scriptSystem = scriptSystem;
 
                 _refreshGameFn = gameViewSystem.refreshGame;
+                _gameViewSystem = gameViewSystem;
 
                 const openScriptEditor = (fileName?: string, content?: string) => {
                     globalState.scriptEditorFileName = fileName || '';
@@ -862,8 +866,12 @@ mcp.log('脚本已加载');
             }
         });
 
+        this._vueApp = app;
         app.mount(this.$app);
-    },
+    } catch(e: any) {
+        console.error('[Bridge] Vue app mount error:', e);
+    }
+},
 
     messages: {
         'mcp-query-selected-node'(this: any, event: any, reqId: string) {
@@ -1126,17 +1134,26 @@ mcp.log('脚本已加载');
                 if (event.reply) event.reply(null, { success: false, message: "刷新失败: " + e.message });
             }
         },
+        'switch-run-mode'(this: any, event: any, mode: 'preview' | 'build' | 'custom') {
+            if (_gameViewSystem && typeof _gameViewSystem.switchRunMode === 'function') {
+                _gameViewSystem.switchRunMode(mode);
+            }
+        },
     },
 
     show() {
-        window.dispatchEvent(new CustomEvent('panel-show'));
+        try { window.dispatchEvent(new CustomEvent('panel-show')); } catch(e) {}
     },
 
     hide() {
-        window.dispatchEvent(new CustomEvent('panel-hide'));
+        try { window.dispatchEvent(new CustomEvent('panel-hide')); } catch(e) {}
     },
 
     close() {
-        window.dispatchEvent(new CustomEvent('panel-close'));
+        try { window.dispatchEvent(new CustomEvent('panel-close')); } catch(e) {}
+        if (this._vueApp) {
+            try { this._vueApp.unmount(); } catch(e) {}
+            this._vueApp = null;
+        }
     }
 });

@@ -97,87 +97,81 @@ window.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // ===== 6. 在顶层直接挂载通信接口 (不再等待不存在的子 iframe) =====
-    (window as any).__mcpInspector = {
-        updateTree: (treeData: string) => {
-            ipcRenderer.sendToHost('update-tree', treeData);
-        },
-        updateEnv: (envData: any) => {
-            ipcRenderer.sendToHost('update-env', envData);
-        },
-        sendLog: (logData: string) => {
-            ipcRenderer.sendToHost('send-log', logData);
-        },
-        sendHandshake: (info: any) => {
-            ipcRenderer.sendToHost('handshake', info);
-        },
-        sendRenderDebuggerPayload: (payload: any) => {
-            ipcRenderer.sendToHost('render-debugger-payload', payload);
-        },
-        sendNodeSelected: (uuid: string) => {
-            ipcRenderer.sendToHost('node-picker-selected', uuid);
-        },
-        sendClearSelection: () => {
-            ipcRenderer.sendToHost('clear-selection');
+    // ===== 6. 通用探针注入器 (支持顶级 Window 与任意子 iframe 框架) =====
+    const injectProbeIntoTarget = (targetWin: any, targetDoc: Document) => {
+        try {
+            if (targetWin.__mcpProbeInjected) return;
+            targetWin.__mcpProbeInjected = true;
+
+            // 挂载 __mcpInspector 桥接 API
+            if (!targetWin.__mcpInspector) {
+                targetWin.__mcpInspector = {
+                    updateTree: (treeData: string) => {
+                        if (targetWin === window) ipcRenderer.sendToHost('update-tree', treeData);
+                        else window.postMessage({ __mcp_ipc_proxy: true, channel: 'update-tree', args: [treeData] }, '*');
+                    },
+                    updateEnv: (envData: any) => {
+                        if (targetWin === window) ipcRenderer.sendToHost('update-env', envData);
+                        else window.postMessage({ __mcp_ipc_proxy: true, channel: 'update-env', args: [envData] }, '*');
+                    },
+                    sendLog: (logData: string) => {
+                        if (targetWin === window) ipcRenderer.sendToHost('send-log', logData);
+                        else window.postMessage({ __mcp_ipc_proxy: true, channel: 'send-log', args: [logData] }, '*');
+                    },
+                    sendHandshake: (info: any) => {
+                        if (targetWin === window) ipcRenderer.sendToHost('handshake', info);
+                        else window.postMessage({ __mcp_ipc_proxy: true, channel: 'handshake', args: [info] }, '*');
+                    },
+                    sendRenderDebuggerPayload: (payload: any) => {
+                        if (targetWin === window) ipcRenderer.sendToHost('render-debugger-payload', payload);
+                        else window.postMessage({ __mcp_ipc_proxy: true, channel: 'render-debugger-payload', args: [payload] }, '*');
+                    },
+                    sendNodeSelected: (uuid: string) => {
+                        if (targetWin === window) ipcRenderer.sendToHost('node-picker-selected', uuid);
+                        else window.postMessage({ __mcp_ipc_proxy: true, channel: 'node-picker-selected', args: [uuid] }, '*');
+                    },
+                    sendClearSelection: () => {
+                        if (targetWin === window) ipcRenderer.sendToHost('clear-selection');
+                        else window.postMessage({ __mcp_ipc_proxy: true, channel: 'clear-selection', args: [] }, '*');
+                    }
+                };
+            }
+
+            const fs = require('fs');
+            const path = require('path');
+            const crawlerContent = fs.readFileSync(path.join(__dirname, 'probe.js'), 'utf-8');
+            const script = targetDoc.createElement('script');
+            script.textContent = crawlerContent;
+            (targetDoc.head || targetDoc.documentElement).appendChild(script);
+        } catch (err) {
+            console.error('[Webview Preload] 目标框架注入探针异常:', err);
         }
     };
 
-    // ===== 7. 在顶层直接注入运行树爬虫 probe.js =====
-    try {
-        const fs = require('fs');
-        const path = require('path');
-        const crawlerContent = fs.readFileSync(path.join(__dirname, 'probe.js'), 'utf-8');
-        const crawlerScript = document.createElement('script');
-        crawlerScript.textContent = crawlerContent;
-        if (document.head) {
-            document.head.appendChild(crawlerScript);
-        } else {
-            console.error('[Webview Preload] document.head 不存在，无法注入 probe.js');
-        }
-    } catch (err) {
-        console.error('[Webview Preload] 无法注入 probe.js:', err);
-    }
+    // 立即向主窗口注入
+    injectProbeIntoTarget(window, document);
 
-    // ===== 8. 子 iframe 兼容嗅探 (旧版 Cocos 预览页) =====
-    // 某些旧版 Cocos Creator 可能使用 <iframe id="GameDiv"> 包裹游戏。
-    // 检测并额外向子框架注入探针（如果存在的话）。
-    setTimeout(() => {
+    // 持续扫描可能挂载了 cc 引擎的 iframe (兼容 2.4.x 的 web-mobile/web-desktop 模板)
+    const scanTimer = setInterval(() => {
         try {
             const gameDiv = document.getElementById('GameDiv') as HTMLIFrameElement | null;
-            if (gameDiv && gameDiv.tagName === 'IFRAME' && gameDiv.contentWindow) {
-
-                // 在子 iframe 中挂载跳板版通信接口（通过 postMessage 回传到顶层）
-                const subframeBootstrap = `
-                    (function() {
-                        if (window.__mcpInspector) return; // 已有，跳过
-                        window.__mcpInspector = {
-                            updateTree: function(data) { window.parent.postMessage({ __mcp_ipc_proxy: true, channel: 'update-tree', args: [data] }, '*'); },
-                            updateEnv: function(data) { window.parent.postMessage({ __mcp_ipc_proxy: true, channel: 'update-env', args: [data] }, '*'); },
-                            sendLog: function(data) { window.parent.postMessage({ __mcp_ipc_proxy: true, channel: 'send-log', args: [data] }, '*'); },
-                            sendHandshake: function(info) { window.parent.postMessage({ __mcp_ipc_proxy: true, channel: 'handshake', args: [info] }, '*'); },
-                            sendRenderDebuggerPayload: function(payload) { window.parent.postMessage({ __mcp_ipc_proxy: true, channel: 'render-debugger-payload', args: [payload] }, '*'); },
-                            sendNodeSelected: function(uuid) { window.parent.postMessage({ __mcp_ipc_proxy: true, channel: 'node-picker-selected', args: [uuid] }, '*'); },
-                            sendClearSelection: function() { window.parent.postMessage({ __mcp_ipc_proxy: true, channel: 'clear-selection', args: [] }, '*'); }
-                        };
-                    })();
-                `;
-
-                // 注入通信桥
-                const bridgeScript = gameDiv.contentWindow.document.createElement('script');
-                bridgeScript.textContent = subframeBootstrap;
-                gameDiv.contentWindow.document.head.appendChild(bridgeScript);
-
-                // 注入树节点爬虫
-                const fs2 = require('fs');
-                const path2 = require('path');
-                const crawlerContent2 = fs2.readFileSync(path2.join(__dirname, 'probe.js'), 'utf-8');
-                const crawlerScript2 = gameDiv.contentWindow.document.createElement('script');
-                crawlerScript2.textContent = crawlerContent2;
-                gameDiv.contentWindow.document.head.appendChild(crawlerScript2);
+            if (gameDiv && gameDiv.contentWindow && gameDiv.contentDocument) {
+                injectProbeIntoTarget(gameDiv.contentWindow, gameDiv.contentDocument);
             }
-        } catch (err) {
-        }
-    }, 1000); // 延迟 1 秒等待子 iframe 加载
+            if (window.frames && window.frames.length > 0) {
+                for (let i = 0; i < window.frames.length; i++) {
+                    try {
+                        const frm = window.frames[i];
+                        if (frm && frm.document) {
+                            injectProbeIntoTarget(frm, frm.document);
+                        }
+                    } catch (e) {}
+                }
+            }
+        } catch (e) {}
+    }, 500);
+
+    setTimeout(() => clearInterval(scanTimer), 10000);
 
     // ===== 9. 录屏功能底层捕获与生命周期调度 =====
     let mediaRecorder: any = null;

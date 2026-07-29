@@ -374,6 +374,17 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
 
         if (typeof Editor !== 'undefined') Editor.log(`[PSD Export] 1. 开始导出节点: ${nodeName} (${uuid})`);
 
+        // 强行注入最新编译的 probe.js 确保热更新
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const probePath = path.join(__dirname, '../../probe.js');
+            if (fs.existsSync(probePath)) {
+                const freshProbeCode = fs.readFileSync(probePath, 'utf-8');
+                await wv.executeJavaScript(freshProbeCode);
+            }
+        } catch (injectErr) {}
+
         const code = `window.__mcpCrawler ? window.__mcpCrawler.exportNodeAsPsdData('${uuid}') : null`;
         try {
             if (typeof Editor !== 'undefined') Editor.log(`[PSD Export] 2. 正在向 WebView 发送脚本抓取节点数据...`);
@@ -451,7 +462,7 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
                     canvas.height = item.height;
                     const ctx = canvas.getContext('2d');
                     if (ctx) {
-                        ctx.drawImage(item.img, 0, 0);
+                        ctx.drawImage(item.img, 0, 0, item.width, item.height);
                     }
                     
                     if (typeof Editor !== 'undefined') {
