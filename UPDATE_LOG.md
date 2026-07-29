@@ -1,5 +1,16 @@
 # 更新日志 (Update Log)
 
+## [Unreleased] - 2026-07-29
+
+### ✨ 新特性与改进
+
+- **非侵入式 Webview 日志监听重构 (Non-Intrusive IPC Log Listener)**：
+  - **解耦 CDP Debugger 与 Proxy 代理**：彻底移除后台自动挂载的 `webContents.debugger` 与控制台 Proxy 拦截逻辑，消除了后台调试器与原生 Chrome DevTools 的 Debugger 独占冲突。
+  - **原生 DOM `console-message` + IPC 转发**：通过在扩展面板层监听 `<webview>` 的原生 `console-message` 事件，将捕获到的控制台日志无感转发至主进程日志缓冲区。
+  - **完美保留调试上下文与源码映射**：零侵入、零污染，确保游戏在预览模式下的 TypeScript SourceMap 映射与开发者工具的 Console 控制台源码归属 100% 正确。
+
+---
+
 ## [Unreleased] - 2026-07-24
 
 ### ✨ 新特性与改进
