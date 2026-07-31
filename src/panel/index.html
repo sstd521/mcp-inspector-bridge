@@ -558,7 +558,7 @@
                 <button class="icon-btn" title="单帧运行" @click="stepGame">⏭</button>
                 <button class="icon-btn" title="性能状态 (FPS)" @click="toggleFPS">{{ isShowFPS ? '📊' : '📉' }}</button>
                 <button class="icon-btn" title="静音/开启游戏声音" @click="toggleMute">{{ isAudioMuted ? '🔇' : '🔊' }}</button>
-                <button class="icon-btn" @click="showProxyModal = true" title="网络代理设置">🌐</button>
+                <button class="icon-btn" @click="activeTab = 6; showProxyModal = true" title="网络代理设置">🌐</button>
                 <button :class="['icon-btn', globalState.isNodePickerActive ? 'active' : '']"
                     :style="{ color: globalState.isNodePickerActive ? '#09f' : '#ccc', borderColor: globalState.isNodePickerActive ? '#09f' : '#555' }"
                     title="场景节点拾取" @click="toggleNodePicker">🎯</button>
@@ -1192,6 +1192,39 @@
                 style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; padding: 15px; background: #1e1e1e; color: #ddd; overflow-y: auto;">
                 <h4 style="margin: 0 0 15px 0; color: #88c; border-bottom: 1px solid #333; padding-bottom: 5px;">偏好设置
                 </h4>
+
+                <!-- 🌐 网络代理设置卡片 -->
+                <div style="margin-bottom: 20px; background: #252525; padding: 12px; border-radius: 4px; border: 1px solid #333; box-shadow: 0 2px 6px rgba(0,0,0,0.3);">
+                    <div style="font-size: var(--base-font-size, 13px); font-weight: bold; margin-bottom: 8px; color: #4fc3f7;">🌐 游戏 Webview 网络代理设置</div>
+                    <div style="font-size: calc(var(--base-font-size, 13px) - 1px); color: #aaa; margin-bottom: 12px;">
+                        配置底层 Webview (persist:game-preview) 独立 Session 的网络代理服务，仅针对游戏预览流量生效，隔离并防止污染 Cocos 编辑器本体。
+                    </div>
+
+                    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 12px; font-size: var(--base-font-size, 13px);">
+                        <span style="color: #aaa; width: 100px;">代理模式:</span>
+                        <select v-model="proxyForm.mode" style="background:#111; color:#fff; padding:4px 8px; border-radius: 3px; border:1px solid #555; width: 220px; font-size: calc(var(--base-font-size, 13px) - 1px);">
+                            <option value="system">跟随系统 (System Default)</option>
+                            <option value="direct">强制直连 (Direct - 绕过代理)</option>
+                            <option value="custom">自定义代理 (Custom Server)</option>
+                        </select>
+                    </div>
+
+                    <div v-if="proxyForm.mode === 'custom'" style="display: flex; align-items: center; gap: 15px; margin-bottom: 12px; font-size: var(--base-font-size, 13px);">
+                        <span style="color: #aaa; width: 100px;">代理服务器:</span>
+                        <input type="text" v-model="proxyForm.server" placeholder="例如: http://127.0.0.1:7890" style="flex: 1; max-width: 300px; background:#111; color:#fff; padding:4px 8px; border-radius: 3px; border:1px solid #555; font-size: calc(var(--base-font-size, 13px) - 1px);" />
+                    </div>
+
+                    <div v-if="proxyForm.mode === 'custom'" style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; font-size: calc(var(--base-font-size, 13px) - 1px);">
+                        <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; color: #ccc;">
+                            <input type="checkbox" v-model="proxyForm.bypassLocalhost" />
+                            自动对 localhost / 127.0.0.1 本地环回地址绕过代理
+                        </label>
+                    </div>
+
+                    <button class="icon-btn" style="width: auto; padding: 5px 15px; font-size: 12px; background: #1976d2; color: #fff; border: none; border-radius: 3px; cursor: pointer;" @click="saveProxySettings">
+                        保存并应用代理配置
+                    </button>
+                </div>
 
                 <div
                     style="margin-bottom: 20px; background: #2a3a2a; padding: 12px; border-radius: 4px; border: 1px solid #3a5a3a; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
