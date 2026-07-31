@@ -31,7 +31,6 @@ let currentConfig: WebviewProxyConfig = {
  * @param config 代理配置项
  */
 export async function applyWebviewProxy(config: WebviewProxyConfig): Promise<void> {
-  currentConfig = { ...config };
   const targetSession = session.fromPartition(PARTITION_NAME);
 
   if (config.mode === 'direct') {
@@ -41,10 +40,15 @@ export async function applyWebviewProxy(config: WebviewProxyConfig): Promise<voi
   } else if (config.mode === 'custom') {
     const bypassRules = config.bypassLocalhost ? 'localhost;127.0.0.1;<loopback>' : '';
     await targetSession.setProxy({
-      proxyRules: config.server || '',
+      proxyRules: config.server ? config.server.trim() : '',
       proxyBypassRules: bypassRules,
     });
   }
+
+  currentConfig = {
+    ...config,
+    server: config.server ? config.server.trim() : '',
+  };
 }
 
 /**
