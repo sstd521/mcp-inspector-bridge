@@ -1,5 +1,20 @@
 # 更新日志 (Update Log)
 
+## [Unreleased] - 2026-07-31
+
+### ✨ 新特性与改进
+
+- **Webview 独立网络代理接管支持 (Webview Session Proxy Management)**：
+  - **Electron Partition 隔离**：给底层游戏 Webview 分配独立的 Session 分区 (`persist:game-preview`)，使代理配置仅针对游戏预览流量生效，隔离并彻底杜绝污染 Cocos Creator 编辑器本体及其他扩展的网络环境。
+  - **多模式代理控制**：支持 `跟随系统 (system)`、`强制直连 (direct)` 以及 `自定义代理服务器 (custom)` 三种代理模式，完美兼容 HTTP 与 SOCKS5 代理协议。
+  - **Localhost 避让保护**：自定义代理模式下默认开启 `localhost;127.0.0.1;<loopback>` 本地环回避直连规则，确保本地游戏预览 HTML (`http://localhost:7456`) 不会被代理阻塞。
+  - **偏好设置 Tab 集成与全持久化**：
+    - 在面板右侧「⚙️ 偏好设置 (Tab 6)」选项卡中内置 `🌐 游戏 Webview 网络代理设置` 独立卡片。
+    - 代理设置通过 `LocalStorage` 全程持久化记录，保存后自动同步至主进程并触发 Webview 热重载生效。
+    - 顶部工具栏新增 🌐 快捷控制图标，点击可直达偏好设置代理配置区域。
+
+---
+
 ## [Unreleased] - 2026-07-29
 
 ### ✨ 新特性与改进
