@@ -674,7 +674,6 @@
                 <button class="icon-btn" title="单帧运行" @click="stepGame">⏭</button>
                 <button class="icon-btn" title="性能状态 (FPS)" @click="toggleFPS">{{ isShowFPS ? '📊' : '📉' }}</button>
                 <button class="icon-btn" title="静音/开启游戏声音" @click="toggleMute">{{ isAudioMuted ? '🔇' : '🔊' }}</button>
-                <button class="icon-btn" @click="activeTab = 6; showProxyModal = true" title="网络代理设置">🌐</button>
                 <button :class="['icon-btn', globalState.isNodePickerActive ? 'active' : '']"
                     :style="{ color: globalState.isNodePickerActive ? '#09f' : '#ccc', borderColor: globalState.isNodePickerActive ? '#09f' : '#555' }"
                     title="场景节点拾取" @click="toggleNodePicker">🎯</button>
@@ -1303,310 +1302,274 @@
                     @locate-node="onRenderDebuggerLocate"></render-debugger>
             </div>
 
-            <!-- Tab 6: 偏好设置 -->
-            <div v-show="activeTab === 6"
-                style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; padding: 15px; background: #1e1e1e; color: #ddd; overflow-y: auto;">
-                <h4 style="margin: 0 0 15px 0; color: #88c; border-bottom: 1px solid #333; padding-bottom: 5px;">偏好设置
-                </h4>
-
-                <!-- 🌐 网络代理设置卡片 -->
-                <div style="margin-bottom: 20px; background: #252525; padding: 12px; border-radius: 4px; border: 1px solid #333; box-shadow: 0 2px 6px rgba(0,0,0,0.3);">
-                    <div style="font-size: var(--base-font-size, 13px); font-weight: bold; margin-bottom: 8px; color: #4fc3f7;">🌐 游戏 Webview 网络代理设置</div>
-                    <div style="font-size: calc(var(--base-font-size, 13px) - 1px); color: #aaa; margin-bottom: 12px;">
-                        配置底层 Webview (persist:game-preview) 独立 Session 的网络代理服务，仅针对游戏预览流量生效，隔离并防止污染 Cocos 编辑器本体。
+            <!-- Tab 6: 偏好设置 (Two-Column Sidebar Layout) -->
+            <div v-show="activeTab === 6" class="setting-container">
+                <!-- 左侧侧边栏导航 -->
+                <div class="setting-sidebar">
+                    <div :class="['setting-menu-item', activeSettingSubTab === 'appearance' ? 'active' : '']" @click="activeSettingSubTab = 'appearance'">
+                        <span>🎨</span>
+                        <span>外观与排版</span>
                     </div>
-
-                    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 12px; font-size: var(--base-font-size, 13px);">
-                        <span style="color: #aaa; width: 100px;">代理模式:</span>
-                        <select v-model="proxyForm.mode" style="background:#111; color:#fff; padding:4px 8px; border-radius: 3px; border:1px solid #555; width: 220px; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                            <option value="system">跟随系统 (System Default)</option>
-                            <option value="direct">强制直连 (Direct - 绕过代理)</option>
-                            <option value="custom">自定义代理 (Custom Server)</option>
-                        </select>
+                    <div :class="['setting-menu-item', activeSettingSubTab === 'network-mcp' ? 'active' : '']" @click="activeSettingSubTab = 'network-mcp'">
+                        <span>🌐</span>
+                        <span>网络与 AI</span>
                     </div>
-
-                    <div v-if="proxyForm.mode === 'custom'" style="display: flex; align-items: center; gap: 15px; margin-bottom: 12px; font-size: var(--base-font-size, 13px);">
-                        <span style="color: #aaa; width: 100px;">代理服务器:</span>
-                        <input type="text" v-model="proxyForm.server" placeholder="例如: http://127.0.0.1:7890" style="flex: 1; max-width: 300px; background:#111; color:#fff; padding:4px 8px; border-radius: 3px; border:1px solid #555; font-size: calc(var(--base-font-size, 13px) - 1px);" />
+                    <div :class="['setting-menu-item', activeSettingSubTab === 'media-res' ? 'active' : '']" @click="activeSettingSubTab = 'media-res'">
+                        <span>🎥</span>
+                        <span>媒体与分辨率</span>
                     </div>
-
-                    <div v-if="proxyForm.mode === 'custom'" style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                        <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; color: #ccc;">
-                            <input type="checkbox" v-model="proxyForm.bypassLocalhost" />
-                            自动对 localhost / 127.0.0.1 本地环回地址绕过代理
-                        </label>
+                    <div :class="['setting-menu-item', activeSettingSubTab === 'logs-diag' ? 'active' : '']" @click="activeSettingSubTab = 'logs-diag'">
+                        <span>📜</span>
+                        <span>日志与诊断</span>
                     </div>
-
-                    <button class="icon-btn" style="width: auto; padding: 5px 15px; font-size: 12px; background: #1976d2; color: #fff; border: none; border-radius: 3px; cursor: pointer;" @click="saveProxySettings">
-                        保存并应用代理配置
-                    </button>
                 </div>
 
-                <div
-                    style="margin-bottom: 20px; background: #2a3a2a; padding: 12px; border-radius: 4px; border: 1px solid #3a5a3a; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                    <div
-                        style="font-size: var(--base-font-size, 13px); font-weight: bold; margin-bottom: 12px; color:#4caf50; border-bottom: 1px solid #334; padding-bottom: 6px;">
-                        🛡️ 客户端配置</div>
+                <!-- 右侧内容区域 -->
+                <div class="setting-content">
+                    <!-- 1. 外观与排版 -->
+                    <div v-show="activeSettingSubTab === 'appearance'">
+                        <div class="setting-card">
+                            <div class="setting-card-title">🎨 面板外观与查看器布局</div>
+                            <div class="setting-card-desc">配置 MCP Inspector 面板整体渲染尺寸、文字大小与检查器工具排版方向。</div>
 
-                    <div v-if="globalState.mcpScanning" style="color: #ffb74d; margin-bottom: 10px;">正在扫描系统 AI 客户端配置...
-                    </div>
-
-                    <div v-if="!globalState.mcpScanning && globalState.mcpClientList.length > 0">
-                        <div
-                            style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px;">
-                            <div style="display: flex; align-items: center; gap: 8px;">
-                                <span
-                                    style="color: #aaa; width: 65px; font-size: calc(var(--base-font-size, 13px) - 1px);">宿主平台:</span>
-                                <select v-model="globalState.mcpSelectedClientId"
-                                    style="background:#111; color:#fff; padding:4px; border-radius: 3px; border:1px solid #555; width: 160px; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                                    <option v-for="client in globalState.mcpClientList" :key="client.id"
-                                        :value="client.id">{{ client.name }}</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <!-- 状态显示 -->
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; background: #222; padding: 8px; border-radius: 4px;"
-                            v-if="globalState.mcpClientList[globalState.mcpSelectedClientId]">
-                            <div
-                                style="display: flex; align-items: center; gap: 6px; font-weight: bold; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                                <span v-if="globalState.mcpClientList[globalState.mcpSelectedClientId].isError"
-                                    style="color: #f44336; font-size: calc(var(--base-font-size, 13px) + 1px);">🔴
-                                    配置损坏</span>
-                                <template v-else>
-                                    <span v-if="!globalState.mcpClientList[globalState.mcpSelectedClientId].isInstalled"
-                                        style="color: #f44336; font-size: calc(var(--base-font-size, 13px) + 1px);">🔴
-                                        未安装</span>
-                                    <span
-                                        v-else-if="globalState.mcpClientList[globalState.mcpSelectedClientId].isConfigured"
-                                        style="color: #4caf50; font-size: calc(var(--base-font-size, 13px) + 1px);">🟢
-                                        已连通</span>
-                                    <span v-else
-                                        style="color: #ff9800; font-size: calc(var(--base-font-size, 13px) + 1px);">🟡
-                                        需验证配置</span>
-                                </template>
-                            </div>
-                            <button :disabled="!globalState.mcpClientList[globalState.mcpSelectedClientId].isInstalled"
-                                :style="{ padding: '5px 15px', background: globalState.mcpClientList[globalState.mcpSelectedClientId].isInstalled ? '#1976d2' : '#555', color: 'white', border: 'none', borderRadius: '4px', cursor: globalState.mcpClientList[globalState.mcpSelectedClientId].isInstalled ? 'pointer' : 'not-allowed', fontWeight:'bold', fontSize: 'calc(var(--base-font-size, 13px) - 1px)' }"
-                                @click="configureMcpClient(globalState.mcpSelectedClientId)">
-                                一键配置
-                            </button>
-                        </div>
-
-                        <!-- Manual Configuration 折叠面板 -->
-                        <details style="margin-bottom: 15px; border-top: 1px dashed #444; padding-top: 10px;">
-                            <summary
-                                style="cursor: pointer; color: #aaa; user-select: none; margin-bottom: 10px; font-size: calc(var(--base-font-size, 13px) - 1px); outline: none;">
-                                手动配置</summary>
-
-                            <div v-if="globalState.mcpClientList[globalState.mcpSelectedClientId] && globalState.mcpClientList[globalState.mcpSelectedClientId].path"
-                                style="margin-bottom: 15px;">
-                                <div
-                                    style="color: #aaa; font-size: calc(var(--base-font-size, 13px) - 1px); margin-bottom: 4px;">
-                                    配置存储路径:</div>
-                                <div style="display: flex; gap: 5px;">
-                                    <input type="text"
-                                        v-model="globalState.mcpClientList[globalState.mcpSelectedClientId].path"
-                                        style="flex:1; background:#111; color:#bbb; border:1px solid #333; border-radius: 3px; padding: 4px; font-size: calc(var(--base-font-size, 13px) - 2px);" />
-                                    <button
-                                        style="padding: 2px 8px; background: #444; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: calc(var(--base-font-size, 13px) - 1px);"
-                                        @click="copyMcpPath(globalState.mcpClientList[globalState.mcpSelectedClientId].path)">复制</button>
+                            <div class="setting-row">
+                                <div class="setting-row-label">
+                                    <span>UI 界面缩放比例</span>
+                                    <span class="setting-row-hint">适应不同 DPI 屏幕或高分辨率显示器</span>
+                                </div>
+                                <div style="display: flex; gap: 10px; align-items: center;">
+                                    <input type="range" v-model.number="globalState.uiScale" min="0.5" max="1.5" step="0.05" style="width: 140px;">
+                                    <span style="font-family: monospace; font-size: 12px; background: #111; padding: 2px 6px; border-radius: 3px; min-width: 36px; text-align: center;">{{ (globalState.uiScale * 100).toFixed(0) }}%</span>
+                                    <button class="icon-btn" style="padding: 2px 8px; width: auto;" @click="globalState.uiScale = 1.0" title="重置">重置</button>
                                 </div>
                             </div>
 
-                            <div style="margin-bottom: 10px;">
-                                <div
-                                    style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 4px;">
-                                    <div style="color: #aaa; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                                        数据载荷:</div>
-                                    <button
-                                        style="padding: 2px 8px; background: #444; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: calc(var(--base-font-size, 13px) - 2px);"
-                                        @click="copyMcpPayload">复制 JSON</button>
+                            <div class="setting-row">
+                                <div class="setting-row-label">
+                                    <span>全局基础字号</span>
+                                    <span class="setting-row-hint">面板控制文本的基准字号大小</span>
                                 </div>
-                                <textarea v-model="globalState.mcpPayload"
-                                    style="width: 100%; height: 160px; background: #000; color: #4caf50; border: 1px solid #444; border-radius: 4px; padding: 8px; font-family: monospace; font-size: calc(var(--base-font-size, 13px) - 2px); box-sizing: border-box; resize: vertical;"></textarea>
+                                <div style="display: flex; gap: 10px; align-items: center;">
+                                    <input type="range" v-model.number="globalState.baseFontSize" min="5" max="20" step="1" style="width: 140px;">
+                                    <span style="font-family: monospace; font-size: 12px; background: #111; padding: 2px 6px; border-radius: 3px; min-width: 36px; text-align: center;">{{ globalState.baseFontSize }}px</span>
+                                    <button class="icon-btn" style="padding: 2px 8px; width: auto;" @click="globalState.baseFontSize = 13" title="重置">重置</button>
+                                </div>
                             </div>
-                        </details>
 
-                        <button
-                            style="width: 100%; padding: 8px; background: #424242; color: #ccc; border: 1px solid #555; border-radius: 4px; cursor: pointer; text-align: center; transition: background 0.2s; font-size: calc(var(--base-font-size, 13px) - 1px);"
-                            @click="configureMcpClient(-1)">
-                            尝试向所有平台分发配置
-                        </button>
-                    </div>
-
-                    <div v-if="globalState.mcpInjectLog"
-                        style="margin-top: 10px; color: #8bc34a; font-size: calc(var(--base-font-size, 13px) - 1px); white-space: pre-wrap; background: #111; padding: 6px; border-radius: 3px; border-left: 3px solid #8bc34a;">
-                        {{ globalState.mcpInjectLog }}
-                    </div>
-                </div>
-
-                <div style="margin-bottom: 20px; background: #252525; padding: 12px; border-radius: 4px; border: 1px solid #333;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                        <div style="font-size: var(--base-font-size, 13px); font-weight: bold;">MCP 通信运行日志</div>
-                        <div style="display: flex; gap: 5px;">
-                            <button class="icon-btn" style="width: auto; padding: 2px 8px;" @click="globalState.mcpLogs = []">清空日志</button>
-                            <button class="icon-btn" style="width: auto; padding: 2px 8px;" @click="copyMcpLogs">复制</button>
+                            <div class="setting-row">
+                                <div class="setting-row-label">
+                                    <span>检查器排布方向</span>
+                                    <span class="setting-row-hint">控制节点树和右侧属性面板的平铺模式</span>
+                                </div>
+                                <div class="setting-segmented">
+                                    <button :class="['setting-segmented-btn', globalState.inspectorLayout === 'horizontal' ? 'active' : '']" @click="globalState.inspectorLayout = 'horizontal'">横向并排 (左右)</button>
+                                    <button :class="['setting-segmented-btn', globalState.inspectorLayout === 'vertical' ? 'active' : '']" @click="globalState.inspectorLayout = 'vertical'">纵向并排 (上下)</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                    <div style="height: 300px; overflow-y: auto; background: #111; padding: 8px; font-family: monospace; font-size: calc(var(--base-font-size, 13px) - 2px); border-radius: 3px;">
-                        <div v-for="(log, i) in globalState.mcpLogs" :key="i" :style="{ color: log.type === 'err' ? '#f44336' : (log.type === 'req' ? '#8bc34a' : '#aaa'), marginBottom: '4px', borderBottom: '1px solid #222', paddingBottom: '4px' }">
-                            <span style="color:#666;">[{{log.time}}]</span>
-                            <span style="margin-left:5px; font-weight:bold;">[{{log.type.toUpperCase()}}]</span>
-                            <span style="margin-left:5px; white-space: pre-wrap; word-break: break-all;">{{log.content}}</span>
-                        </div>
-                        <div v-if="globalState.mcpLogs.length === 0" style="color: #666; text-align: center; margin-top: 10px;">暂无日志数据</div>
-                    </div>
-                </div>
 
-                <div
-                    style="margin-bottom: 20px; background: #252525; padding: 12px; border-radius: 4px; border: 1px solid #333;">
-                    <div style="font-size: var(--base-font-size, 13px); font-weight: bold; margin-bottom: 8px;">UI
-                        界面缩放比例</div>
-                    <div style="font-size: calc(var(--base-font-size, 13px) - 1px); color: #aaa; margin-bottom: 10px;">
-                        如果面板在低分辨率屏幕下显示拥挤，可调低此比例（修改后将立即在本地缓存）。</div>
-                    <div style="display: flex; gap: 10px; align-items: center;">
-                        <input type="range" v-model.number="globalState.uiScale" min="0.5" max="1.5" step="0.05"
-                            style="width: 200px;">
-                        <span
-                            style="font-family: monospace; font-size: var(--base-font-size, 13px); background: #111; padding: 3px 6px; border-radius: 3px; min-width: 40px; text-align: center;">{{
-                            (globalState.uiScale * 100).toFixed(0) }}%</span>
-                        <button class="icon-btn" style="padding: 2px 8px; width: auto;"
-                            @click="globalState.uiScale = 1.0" title="重置">重置</button>
-                    </div>
-                </div>
+                    <!-- 2. 网络与 AI -->
+                    <div v-show="activeSettingSubTab === 'network-mcp'">
+                        <!-- 游戏 Webview 代理卡片 -->
+                        <div class="setting-card">
+                            <div class="setting-card-title">🌐 游戏 Webview 网络代理设置</div>
+                            <div class="setting-card-desc">配置底层 Webview (persist:game-preview) 独立 Session 代理，隔离并防止污染 Cocos 编辑器本体。</div>
 
-                <div
-                    style="margin-bottom: 20px; background: #252525; padding: 12px; border-radius: 4px; border: 1px solid #333;">
-                    <div style="font-size: var(--base-font-size, 13px); font-weight: bold; margin-bottom: 8px;">基础字号
-                    </div>
-                    <div style="font-size: calc(var(--base-font-size, 13px) - 1px); color: #aaa; margin-bottom: 10px;">
-                        作为全局排版基准值 (修改后将立即在本地缓存)。</div>
-                    <div style="display: flex; gap: 10px; align-items: center;">
-                        <input type="range" v-model.number="globalState.baseFontSize" min="5" max="20" step="1"
-                            style="width: 200px;">
-                        <span
-                            style="font-family: monospace; font-size: var(--base-font-size, 13px); background: #111; padding: 3px 6px; border-radius: 3px; min-width: 40px; text-align: center;">{{
-                            globalState.baseFontSize }}px</span>
-                        <button class="icon-btn" style="padding: 2px 8px; width: auto;"
-                            @click="globalState.baseFontSize = 13" title="重置">重置</button>
-                    </div>
-                </div>
+                            <div style="display: flex; flex-direction: column; gap: 12px; font-size: 13px;">
+                                <div style="display: flex; align-items: center; gap: 15px;">
+                                    <span style="color: #aaa; width: 90px;">代理模式:</span>
+                                    <select v-model="proxyForm.mode" @change="saveProxySettings" style="background:#111; color:#fff; padding:4px 8px; border-radius: 3px; border:1px solid #555; width: 220px; font-size: 12px;">
+                                        <option value="system">跟随系统 (System Default)</option>
+                                        <option value="direct">强制直连 (Direct - 绕过代理)</option>
+                                        <option value="custom">自定义代理 (Custom Server)</option>
+                                    </select>
+                                </div>
 
-                <div
-                    style="margin-bottom: 20px; background: #252525; padding: 12px; border-radius: 4px; border: 1px solid #333;">
-                    <div style="font-size: var(--base-font-size, 13px); font-weight: bold; margin-bottom: 8px;">检查器排布方向
-                    </div>
-                    <div style="font-size: calc(var(--base-font-size, 13px) - 1px); color: #aaa; margin-bottom: 10px;">
-                        控制左侧节点树和右侧属性面板的排列方式。</div>
-                    <div style="display: flex; gap: 15px; align-items: center; font-size: var(--base-font-size, 13px);">
-                        <label style="cursor: pointer; display: flex; align-items: center; gap: 5px;">
-                            <input type="radio" v-model="globalState.inspectorLayout" value="horizontal"> 横向并排 (左右)
-                        </label>
-                        <label style="cursor: pointer; display: flex; align-items: center; gap: 5px;">
-                            <input type="radio" v-model="globalState.inspectorLayout" value="vertical"> 纵向并排 (上下)
-                        </label>
-                    </div>
-                </div>
+                                <div v-if="proxyForm.mode === 'custom'" style="display: flex; align-items: center; gap: 15px;">
+                                    <span style="color: #aaa; width: 90px;">代理服务器:</span>
+                                    <input type="text" v-model="proxyForm.server" @blur="saveProxySettings" placeholder="例如: http://127.0.0.1:7890" style="flex: 1; max-width: 300px; background:#111; color:#fff; padding:4px 8px; border-radius: 3px; border:1px solid #555; font-size: 12px;" />
+                                </div>
 
-                <div
-                    style="margin-bottom: 20px; background: #252525; padding: 12px; border-radius: 4px; border: 1px solid #333;">
-                    <div style="font-size: var(--base-font-size, 13px); font-weight: bold; margin-bottom: 8px;">🎥 录屏设置
-                    </div>
-                    <div style="font-size: calc(var(--base-font-size, 13px) - 1px); color: #aaa; margin-bottom: 10px;">
-                        配置视频录制帧率及导出分辨率倍率（以当前窗口分辨率计算）。</div>
-                    
-                    <div style="display: flex; flex-direction: column; gap: 12px;">
-                        <!-- 帧率设置 -->
-                        <div style="display: flex; align-items: center; gap: 15px; font-size: var(--base-font-size, 13px);">
-                            <span style="color: #aaa; width: 100px;">录制帧率:</span>
-                            <select v-model.number="globalState.recordFps"
-                                style="background:#111; color:#fff; padding:4px; border-radius: 3px; border:1px solid #555; width: 110px; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                                <option :value="15">15 FPS</option>
-                                <option :value="24">24 FPS</option>
-                                <option :value="30">30 FPS (默认)</option>
-                                <option :value="60">60 FPS</option>
-                            </select>
-                        </div>
-                        
-                        <!-- 分辨率倍率 -->
-                        <div style="display: flex; align-items: center; gap: 15px; font-size: var(--base-font-size, 13px);">
-                            <span style="color: #aaa; width: 100px;">分辨率倍率:</span>
-                            <select v-model.number="globalState.recordScale"
-                                style="background:#111; color:#fff; padding:4px; border-radius: 3px; border:1px solid #555; width: 110px; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                                <option :value="0.5">0.5x</option>
-                                <option :value="1.0">1.0x (原始)</option>
-                                <option :value="1.5">1.5x</option>
-                                <option :value="2.0">2.0x (高清)</option>
-                            </select>
+                                <div v-if="proxyForm.mode === 'custom'" style="display: flex; align-items: center; gap: 10px;">
+                                    <label style="cursor: pointer; display: flex; align-items: center; gap: 6px; color: #ccc; font-size: 12px;">
+                                        <input type="checkbox" v-model="proxyForm.bypassLocalhost" @change="saveProxySettings" />
+                                        自动对 localhost / 127.0.0.1 本地环回地址绕过代理
+                                    </label>
+                                </div>
+
+                                <div style="display: flex; justify-content: flex-start; margin-top: 4px;">
+                                    <button class="icon-btn" style="width: auto; padding: 5px 15px; font-size: 12px; background: #007acc; border-color: #007acc; color: #fff; font-weight: bold;" @click="saveProxySettings">
+                                        保存并应用代理配置
+                                    </button>
+                                </div>
+                            </div>
                         </div>
 
-                        <!-- 视频保存格式 -->
-                        <div style="display: flex; align-items: center; gap: 15px; font-size: var(--base-font-size, 13px);">
-                            <span style="color: #aaa; width: 100px;">保存格式:</span>
-                            <select v-model="globalState.recordFormat"
-                                style="background:#111; color:#fff; padding:4px; border-radius: 3px; border:1px solid #555; width: 110px; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                                <option value="webm">WebM (.webm)</option>
-                                <option value="mp4">MP4 (.mp4)</option>
-                            </select>
+                        <!-- MCP 客户端配置卡片 -->
+                        <div class="setting-card">
+                            <div class="setting-card-title">🛡️ MCP 宿主 AI 客户端配置</div>
+                            <div class="setting-card-desc">自动检测与分发 MCP Inspector Bridge 工具链连接配置至宿主 AI 客户端。</div>
+
+                            <div v-if="globalState.mcpScanning" style="color: #ffb74d; margin-bottom: 10px;">正在扫描系统 AI 客户端配置...</div>
+
+                            <div v-if="!globalState.mcpScanning && globalState.mcpClientList.length > 0">
+                                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <span style="color: #aaa; width: 65px; font-size: 12px;">宿主平台:</span>
+                                        <select v-model="globalState.mcpSelectedClientId" style="background:#111; color:#fff; padding:4px; border-radius: 3px; border:1px solid #555; width: 160px; font-size: 12px;">
+                                            <option v-for="client in globalState.mcpClientList" :key="client.id" :value="client.id">{{ client.name }}</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; background: #1b1b1c; padding: 8px 12px; border-radius: 4px; border: 1px solid #333;" v-if="globalState.mcpClientList[globalState.mcpSelectedClientId]">
+                                    <div style="display: flex; align-items: center; gap: 6px; font-weight: bold; font-size: 12px;">
+                                        <span v-if="globalState.mcpClientList[globalState.mcpSelectedClientId].isError" style="color: #f44336;">🔴 配置损坏</span>
+                                        <template v-else>
+                                            <span v-if="!globalState.mcpClientList[globalState.mcpSelectedClientId].isInstalled" style="color: #f44336;">🔴 未安装</span>
+                                            <span v-else-if="globalState.mcpClientList[globalState.mcpSelectedClientId].isConfigured" style="color: #4caf50;">🟢 已连通</span>
+                                            <span v-else style="color: #ff9800;">🟡 需验证配置</span>
+                                        </template>
+                                    </div>
+                                    <button :disabled="!globalState.mcpClientList[globalState.mcpSelectedClientId].isInstalled"
+                                        :style="{ padding: '4px 14px', background: globalState.mcpClientList[globalState.mcpSelectedClientId].isInstalled ? '#007acc' : '#555', color: 'white', border: 'none', borderRadius: '3px', cursor: globalState.mcpClientList[globalState.mcpSelectedClientId].isInstalled ? 'pointer' : 'not-allowed', fontWeight:'bold', fontSize: '12px' }"
+                                        @click="configureMcpClient(globalState.mcpSelectedClientId)">
+                                        一键配置
+                                    </button>
+                                </div>
+
+                                <details style="margin-bottom: 12px; border-top: 1px dashed #333; padding-top: 8px;">
+                                    <summary style="cursor: pointer; color: #aaa; user-select: none; margin-bottom: 8px; font-size: 12px; outline: none;">手动配置展开</summary>
+
+                                    <div v-if="globalState.mcpClientList[globalState.mcpSelectedClientId] && globalState.mcpClientList[globalState.mcpSelectedClientId].path" style="margin-bottom: 10px;">
+                                        <div style="color: #aaa; font-size: 11px; margin-bottom: 4px;">配置存储路径:</div>
+                                        <div style="display: flex; gap: 5px;">
+                                            <input type="text" v-model="globalState.mcpClientList[globalState.mcpSelectedClientId].path" style="flex:1; background:#111; color:#bbb; border:1px solid #333; border-radius: 3px; padding: 4px; font-size: 11px;" />
+                                            <button style="padding: 2px 8px; background: #444; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;" @click="copyMcpPath(globalState.mcpClientList[globalState.mcpSelectedClientId].path)">复制</button>
+                                        </div>
+                                    </div>
+
+                                    <div style="margin-bottom: 10px;">
+                                        <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 4px;">
+                                            <div style="color: #aaa; font-size: 11px;">数据载荷:</div>
+                                            <button style="padding: 2px 8px; background: #444; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;" @click="copyMcpPayload">复制 JSON</button>
+                                        </div>
+                                        <textarea v-model="globalState.mcpPayload" style="width: 100%; height: 140px; background: #000; color: #4caf50; border: 1px solid #444; border-radius: 4px; padding: 6px; font-family: monospace; font-size: 11px; box-sizing: border-box; resize: vertical;"></textarea>
+                                    </div>
+                                </details>
+
+                                <button style="width: 100%; padding: 7px; background: #333; color: #ccc; border: 1px solid #444; border-radius: 3px; cursor: pointer; text-align: center; font-size: 12px;" @click="configureMcpClient(-1)">
+                                    尝试向所有平台分发配置
+                                </button>
+                            </div>
+
+                            <div v-if="globalState.mcpInjectLog" style="margin-top: 10px; color: #8bc34a; font-size: 11px; white-space: pre-wrap; background: #111; padding: 6px; border-radius: 3px; border-left: 3px solid #8bc34a;">
+                                {{ globalState.mcpInjectLog }}
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <div
-                    style="margin-bottom: 20px; background: #252525; padding: 12px; border-radius: 4px; border: 1px solid #333;">
-                    <div style="font-size: var(--base-font-size, 13px); font-weight: bold; margin-bottom: 10px;">📐 自定义预览分辨率</div>
-                    <div style="font-size: calc(var(--base-font-size, 13px) - 1px); color: #aaa; margin-bottom: 12px;">
-                        添加自定义分辨率，将出现在预览窗口的分辨率下拉菜单中（全局生效，跨项目共享）。</div>
+                    <!-- 3. 媒体与分辨率 -->
+                    <div v-show="activeSettingSubTab === 'media-res'">
+                        <!-- 🎥 录屏设置卡片 -->
+                        <div class="setting-card">
+                            <div class="setting-card-title">🎥 视频录屏参数</div>
+                            <div class="setting-card-desc">配置视频录制帧率及导出分辨率倍率（以当前窗口分辨率计算）。</div>
 
-                    <!-- 添加表单 -->
-                    <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 12px;">
-                        <input v-model="newResName" placeholder="名称（选填）"
-                            style="background:#111; color:#fff; padding:4px 8px; border-radius:3px; border:1px solid #555; width:130px; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                        <input v-model="newResWidth" placeholder="宽" type="number" min="1"
-                            style="background:#111; color:#fff; padding:4px 8px; border-radius:3px; border:1px solid #555; width:70px; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                        <span style="color:#888;">×</span>
-                        <input v-model="newResHeight" placeholder="高" type="number" min="1"
-                            style="background:#111; color:#fff; padding:4px 8px; border-radius:3px; border:1px solid #555; width:70px; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                        <button class="icon-btn" style="padding: 4px 12px; width: auto; font-size: calc(var(--base-font-size, 13px) - 1px);"
-                            @click="addCustomResolution">添加</button>
-                    </div>
+                            <div style="display: flex; flex-direction: column; gap: 10px;">
+                                <div class="setting-row">
+                                    <div class="setting-row-label">
+                                        <span>录制帧率</span>
+                                        <span class="setting-row-hint">较高帧率提高平滑度，但增大输出体积</span>
+                                    </div>
+                                    <select v-model.number="globalState.recordFps" style="background:#111; color:#fff; padding:4px; border-radius: 3px; border:1px solid #555; width: 120px; font-size: 12px;">
+                                        <option :value="15">15 FPS</option>
+                                        <option :value="24">24 FPS</option>
+                                        <option :value="30">30 FPS (默认)</option>
+                                        <option :value="60">60 FPS</option>
+                                    </select>
+                                </div>
 
-                    <!-- 已有列表 -->
-                    <div v-if="customResolutions.length > 0"
-                        style="display: flex; flex-direction: column; gap: 6px;">
-                        <div v-for="res in customResolutions" :key="res.id"
-                            style="display: flex; align-items: center; gap: 8px; background: #1a1a1a; padding: 6px 10px; border-radius: 3px; border: 1px solid #333;">
+                                <div class="setting-row">
+                                    <div class="setting-row-label">
+                                        <span>分辨率倍率</span>
+                                        <span class="setting-row-hint">按视口尺寸按比例缩放渲染画质</span>
+                                    </div>
+                                    <select v-model.number="globalState.recordScale" style="background:#111; color:#fff; padding:4px; border-radius: 3px; border:1px solid #555; width: 120px; font-size: 12px;">
+                                        <option :value="0.5">0.5x</option>
+                                        <option :value="1.0">1.0x (原始)</option>
+                                        <option :value="1.5">1.5x</option>
+                                        <option :value="2.0">2.0x (高清)</option>
+                                    </select>
+                                </div>
 
-                            <!-- 正常显示模式 -->
-                            <template v-if="editingResId !== res.id">
-                                <span style="flex: 1; color: #ddd; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                                    🏷️ {{ getResolutionDisplayName(res) }}
-                                </span>
-                                <button class="icon-btn" style="padding: 2px 8px; width: auto; font-size: calc(var(--base-font-size, 13px) - 2px);"
-                                    @click="startEditResolution(res)" title="编辑">✏️</button>
-                                <button class="icon-btn" style="padding: 2px 8px; width: auto; font-size: calc(var(--base-font-size, 13px) - 2px);"
-                                    @click="deleteCustomResolution(res.id)" title="删除">🗑️</button>
-                            </template>
+                                <div class="setting-row">
+                                    <div class="setting-row-label">
+                                        <span>保存视频格式</span>
+                                        <span class="setting-row-hint">选择 WebM 或 MP4 编码容器</span>
+                                    </div>
+                                    <select v-model="globalState.recordFormat" style="background:#111; color:#fff; padding:4px; border-radius: 3px; border:1px solid #555; width: 120px; font-size: 12px;">
+                                        <option value="webm">WebM (.webm)</option>
+                                        <option value="mp4">MP4 (.mp4)</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
 
-                            <!-- 编辑模式 -->
-                            <template v-else>
-                                <input v-model="editResName" placeholder="名称（选填）"
-                                    style="background:#111; color:#fff; padding:3px 6px; border-radius:3px; border:1px solid #555; width:120px; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                                <input v-model="editResWidth" type="number" min="1"
-                                    style="background:#111; color:#fff; padding:3px 6px; border-radius:3px; border:1px solid #555; width:60px; font-size: calc(var(--base-font-size, 13px) - 1px);">
+                        <!-- 📐 自定义预览分辨率卡片 -->
+                        <div class="setting-card">
+                            <div class="setting-card-title">📐 自定义预览分辨率管理</div>
+                            <div class="setting-card-desc">添加自定义分辨率，将出现在顶部预览窗口下拉菜单中（全局生效，跨项目共享）。</div>
+
+                            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 12px;">
+                                <input v-model="newResName" placeholder="名称（选填）" style="background:#111; color:#fff; padding:4px 8px; border-radius:3px; border:1px solid #555; width:130px; font-size: 12px;">
+                                <input v-model="newResWidth" placeholder="宽" type="number" min="1" style="background:#111; color:#fff; padding:4px 8px; border-radius:3px; border:1px solid #555; width:70px; font-size: 12px;">
                                 <span style="color:#888;">×</span>
-                                <input v-model="editResHeight" type="number" min="1"
-                                    style="background:#111; color:#fff; padding:3px 6px; border-radius:3px; border:1px solid #555; width:60px; font-size: calc(var(--base-font-size, 13px) - 1px);">
-                                <button class="icon-btn" style="padding: 3px 10px; width: auto; font-size: calc(var(--base-font-size, 13px) - 2px); background: #4caf50; border-color: #4caf50;"
-                                    @click="saveEditResolution">保存</button>
-                                <button class="icon-btn" style="padding: 3px 10px; width: auto; font-size: calc(var(--base-font-size, 13px) - 2px);"
-                                    @click="cancelEditResolution">取消</button>
-                            </template>
+                                <input v-model="newResHeight" placeholder="高" type="number" min="1" style="background:#111; color:#fff; padding:4px 8px; border-radius:3px; border:1px solid #555; width:70px; font-size: 12px;">
+                                <button class="icon-btn" style="padding: 4px 12px; width: auto; font-size: 12px;" @click="addCustomResolution">添加</button>
+                            </div>
+
+                            <div v-if="customResolutions.length > 0" style="display: flex; flex-direction: column; gap: 6px;">
+                                <div v-for="res in customResolutions" :key="res.id" style="display: flex; align-items: center; gap: 8px; background: #1a1a1a; padding: 6px 10px; border-radius: 3px; border: 1px solid #333;">
+                                    <template v-if="editingResId !== res.id">
+                                        <span style="flex: 1; color: #ddd; font-size: 12px;">🏷️ {{ getResolutionDisplayName(res) }}</span>
+                                        <button class="icon-btn" style="padding: 2px 8px; width: auto; font-size: 11px;" @click="startEditResolution(res)" title="编辑">✏️</button>
+                                        <button class="icon-btn" style="padding: 2px 8px; width: auto; font-size: 11px;" @click="deleteCustomResolution(res.id)" title="删除">🗑️</button>
+                                    </template>
+                                    <template v-else>
+                                        <input v-model="editResName" placeholder="名称（选填）" style="background:#111; color:#fff; padding:3px 6px; border-radius:3px; border:1px solid #555; width:110px; font-size: 11px;">
+                                        <input v-model="editResWidth" type="number" min="1" style="background:#111; color:#fff; padding:3px 6px; border-radius:3px; border:1px solid #555; width:55px; font-size: 11px;">
+                                        <span style="color:#888;">×</span>
+                                        <input v-model="editResHeight" type="number" min="1" style="background:#111; color:#fff; padding:3px 6px; border-radius:3px; border:1px solid #555; width:55px; font-size: 11px;">
+                                        <button class="icon-btn" style="padding: 3px 8px; width: auto; font-size: 11px; background: #4caf50; border-color: #4caf50;" @click="saveEditResolution">保存</button>
+                                        <button class="icon-btn" style="padding: 3px 8px; width: auto; font-size: 11px;" @click="cancelEditResolution">取消</button>
+                                    </template>
+                                </div>
+                            </div>
+                            <div v-else style="color: #666; font-size: 11px; margin-top: 6px;">暂无自定义分辨率，可在上方新增。</div>
                         </div>
                     </div>
-                    <div v-else style="color: #666; font-size: calc(var(--base-font-size, 13px) - 2px); margin-top: 8px;">
-                        暂无自定义分辨率，在上方添加。
+
+                    <!-- 4. 日志与诊断 -->
+                    <div v-show="activeSettingSubTab === 'logs-diag'">
+                        <div class="setting-card">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <div class="setting-card-title" style="margin-bottom: 0;">📜 MCP 通信运行日志</div>
+                                <div style="display: flex; gap: 5px;">
+                                    <button class="icon-btn" style="width: auto; padding: 2px 8px;" @click="globalState.mcpLogs = []">清空日志</button>
+                                    <button class="icon-btn" style="width: auto; padding: 2px 8px;" @click="copyMcpLogs">复制</button>
+                                </div>
+                            </div>
+                            <div style="height: 420px; overflow-y: auto; background: #111; padding: 8px; font-family: monospace; font-size: 11px; border-radius: 3px; border: 1px solid #333;">
+                                <div v-for="(log, i) in globalState.mcpLogs" :key="i" :style="{ color: log.type === 'err' ? '#f44336' : (log.type === 'req' ? '#8bc34a' : '#aaa'), marginBottom: '4px', borderBottom: '1px solid #222', paddingBottom: '4px' }">
+                                    <span style="color:#666;">[{{log.time}}]</span>
+                                    <span style="margin-left:5px; font-weight:bold;">[{{log.type.toUpperCase()}}]</span>
+                                    <span style="margin-left:5px; white-space: pre-wrap; word-break: break-all;">{{log.content}}</span>
+                                </div>
+                                <div v-if="globalState.mcpLogs.length === 0" style="color: #666; text-align: center; margin-top: 20px;">暂无通信日志数据</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1669,48 +1632,5 @@
         </div>
     </div>
 
-    <!-- Proxy Settings Modal -->
-    <div v-if="showProxyModal" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.75); z-index: 9999; display: flex; justify-content: center; align-items: center; font-family: sans-serif;">
-        <div style="width: 360px; background: #252526; border: 1px solid #454545; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.6); display: flex; flex-direction: column; overflow: hidden;">
-            <!-- 弹窗标题 -->
-            <div style="height: 36px; background: #323233; border-bottom: 1px solid #3c3c3c; display: flex; justify-content: space-between; align-items: center; padding: 0 12px; box-sizing: border-box;">
-                <div style="color: #fff; font-size: 13px; font-weight: bold; display: flex; align-items: center; gap: 6px;">
-                    <span>🌐</span>
-                    <span>网络代理设置</span>
-                </div>
-                <button @click="showProxyModal = false" style="background: transparent; border: none; color: #aaa; cursor: pointer; font-size: 18px; line-height: 1; outline: none;">&times;</button>
-            </div>
-            <!-- 弹窗内容表单 -->
-            <div style="padding: 16px; display: flex; flex-direction: column; gap: 14px; font-size: 13px; color: #ccc;">
-                <!-- 代理模式选择 -->
-                <div style="display: flex; flex-direction: column; gap: 6px;">
-                    <label style="font-size: 12px; color: #aaa;">代理模式</label>
-                    <select v-model="proxyForm.mode" style="background: #1e1e1e; color: #fff; border: 1px solid #454545; padding: 6px 8px; border-radius: 4px; outline: none; font-size: 13px;">
-                        <option value="system">系统代理 (System Proxy)</option>
-                        <option value="direct">直连模式 (Direct)</option>
-                        <option value="custom">自定义代理 (Custom Proxy)</option>
-                    </select>
-                </div>
 
-                <!-- 自定义代理服务器输入框 (仅在 custom 模式下显示) -->
-                <div v-if="proxyForm.mode === 'custom'" style="display: flex; flex-direction: column; gap: 6px;">
-                    <label style="font-size: 12px; color: #aaa;">代理服务器 (Server)</label>
-                    <input type="text" v-model="proxyForm.server" placeholder="例如: http://127.0.0.1:7890 或 socks5://127.0.0.1:1080" style="background: #1e1e1e; color: #fff; border: 1px solid #454545; padding: 6px 8px; border-radius: 4px; outline: none; font-size: 12px;" />
-                </div>
-
-                <!-- 绕过 Localhost 复选框 (仅在 custom 模式下显示) -->
-                <div v-if="proxyForm.mode === 'custom'" style="display: flex; align-items: center; gap: 8px;">
-                    <input type="checkbox" id="bypass-localhost-check" v-model="proxyForm.bypassLocalhost" style="cursor: pointer;" />
-                    <label for="bypass-localhost-check" style="cursor: pointer; font-size: 12px; color: #bbb; user-select: none;">
-                        自动绕过 localhost / 127.0.0.1
-                    </label>
-                </div>
-            </div>
-            <!-- 底部按钮操作栏 -->
-            <div style="padding: 10px 16px; background: #1e1e1e; border-top: 1px solid #3c3c3c; display: flex; justify-content: flex-end; gap: 8px;">
-                <button class="icon-btn" style="width: auto; padding: 5px 14px; font-size: 12px;" @click="showProxyModal = false">取消</button>
-                <button class="icon-btn" style="width: auto; padding: 5px 14px; font-size: 12px; background: #007acc; border-color: #007acc; color: #fff; font-weight: bold;" @click="saveProxySettings">应用代理配置</button>
-            </div>
-        </div>
-    </div>
 </div>
