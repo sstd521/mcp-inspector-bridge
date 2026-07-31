@@ -2,7 +2,7 @@ declare const Editor: any;
 import * as fs from 'fs';
 import * as path from 'path';
 
-const { createApp, ref, onMounted, watch, computed } = require('vue');
+const { createApp, ref, reactive, onMounted, watch, computed } = require('vue');
 const { NodeTree } = require('./components/NodeTree');
 const { NodeInspector } = require('./components/NodeInspector');
 const { RenderDebugger } = require('./components/RenderDebugger');
@@ -50,11 +50,19 @@ module.exports = Editor.Panel.extend({
                     const activeTab = ref(0);
                     const wrapperSize = ref({ width: 0, height: 0 });
 
-                // Vue Refs
-                const gameView = ref(null);
-                const devtoolsView = ref(null);
-                const wrapMount = ref(null);
-                const nodeTreeRef = ref(null);
+                    // 代理相关状态 (Proxy Config State)
+                    const showProxyModal = ref(false);
+                    const proxyForm = reactive({
+                        mode: 'system', // 'system' | 'direct' | 'custom'
+                        server: '',
+                        bypassLocalhost: true
+                    });
+
+                    // Vue Refs
+                    const gameView = ref(null);
+                    const devtoolsView = ref(null);
+                    const wrapMount = ref(null);
+                    const nodeTreeRef = ref(null);
 
                 // Initialize Composables
                 const layoutSystem = useLayout(globalState, wrapMount, wrapperSize);
@@ -466,6 +474,29 @@ mcp.log('脚本已加载');
                         panelAppElement.style.zoom = globalState.uiScale.toString();
                         panelAppElement.style.setProperty('--base-font-size', globalState.baseFontSize + 'px');
                     }
+
+                    // 从 LocalStorage 恢复代理配置并发送至主进程
+                    try {
+                        const savedProxy = window.localStorage.getItem('mcp_webview_proxy_config');
+                        if (savedProxy) {
+                            const parsed = JSON.parse(savedProxy);
+                            if (parsed && typeof parsed === 'object') {
+                                if (parsed.mode) proxyForm.mode = parsed.mode;
+                                if (parsed.server !== undefined) proxyForm.server = parsed.server;
+                                if (parsed.bypassLocalhost !== undefined) proxyForm.bypassLocalhost = parsed.bypassLocalhost;
+
+                                if (typeof Editor !== 'undefined') {
+                                    Editor.Ipc.sendToMain('mcp-inspector-bridge:set-webview-proxy', {
+                                        mode: proxyForm.mode,
+                                        server: proxyForm.server,
+                                        bypassLocalhost: proxyForm.bypassLocalhost
+                                    });
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[Proxy] 读取本地代理配置失败:', e);
+                    }
                     
                     window.addEventListener('mcp-status-changed', ((e: CustomEvent) => {
                         globalState.mcpStatus = e.detail;
@@ -772,7 +803,39 @@ mcp.log('脚本已加载');
                     }
                 };
 
+                /**
+                 * 保存代理配置至 LocalStorage 并发送 IPC 通道告知主进程更新设置，随后触发 Webview 重新加载
+                 */
+                const saveProxySettings = () => {
+                    const payload = {
+                        mode: proxyForm.mode,
+                        server: proxyForm.server,
+                        bypassLocalhost: proxyForm.bypassLocalhost
+                    };
+                    try {
+                        window.localStorage.setItem('mcp_webview_proxy_config', JSON.stringify(payload));
+                    } catch (e) {
+                        console.warn('[Proxy] 保存代理配置至 localStorage 失败:', e);
+                    }
+
+                    if (typeof Editor !== 'undefined') {
+                        Editor.Ipc.sendToMain('mcp-inspector-bridge:set-webview-proxy', payload);
+                    }
+
+                    showProxyModal.value = false;
+
+                    if (gameViewSystem && typeof gameViewSystem.refreshGame === 'function') {
+                        gameViewSystem.refreshGame();
+                    } else if (_refreshGameFn) {
+                        _refreshGameFn();
+                    }
+                };
+
                 return {
+                    showProxyModal,
+                    proxyForm,
+                    saveProxySettings,
+
                     activeTab,
                     globalState,
                     gameView,
