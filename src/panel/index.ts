@@ -48,6 +48,7 @@ module.exports = Editor.Panel.extend({
                 components: { NodeTree, 'node-inspector': NodeInspector, 'render-debugger': RenderDebugger, 'script-manager': ScriptManager },
                 setup() {
                     const activeTab = ref(0);
+                    const activeSettingSubTab = ref('appearance' as 'appearance' | 'network-mcp' | 'media-res' | 'logs-diag');
                     const wrapperSize = ref({ width: 0, height: 0 });
 
                     // 代理相关状态 (Proxy Config State)
@@ -837,6 +838,7 @@ mcp.log('脚本已加载');
                     saveProxySettings,
 
                     activeTab,
+                    activeSettingSubTab,
                     globalState,
                     gameView,
                     devtoolsView,

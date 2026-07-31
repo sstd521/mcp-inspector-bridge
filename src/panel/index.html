@@ -529,6 +529,122 @@
     .build-empty-card .btn-primary:hover {
         background: #0098ff;
     }
+
+    /* 偏好设置分栏与统一组件样式 */
+    .setting-container {
+        display: flex;
+        width: 100%;
+        height: 100%;
+        background: #1e1e1e;
+        overflow: hidden;
+    }
+    .setting-sidebar {
+        width: 160px;
+        background: #222223;
+        border-right: 1px solid #333;
+        display: flex;
+        flex-direction: column;
+        padding: 10px 0;
+        box-sizing: border-box;
+        user-select: none;
+        flex-shrink: 0;
+    }
+    .setting-menu-item {
+        height: 36px;
+        display: flex;
+        align-items: center;
+        padding: 0 14px;
+        font-size: 13px;
+        color: #aaa;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+        border-left: 3px solid transparent;
+        gap: 8px;
+    }
+    .setting-menu-item:hover {
+        background: #2a2a2b;
+        color: #eee;
+    }
+    .setting-menu-item.active {
+        background: #2d2d30;
+        color: #fff;
+        font-weight: bold;
+        border-left-color: #007acc;
+    }
+    .setting-content {
+        flex: 1;
+        padding: 16px 20px;
+        box-sizing: border-box;
+        overflow-y: auto;
+        color: #ddd;
+    }
+    .setting-card {
+        background: #252526;
+        border: 1px solid #333;
+        border-radius: 4px;
+        padding: 14px 16px;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+    .setting-card-title {
+        font-size: 13px;
+        font-weight: bold;
+        color: #4fc3f7;
+        margin-bottom: 6px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .setting-card-desc {
+        font-size: 12px;
+        color: #888;
+        margin-bottom: 12px;
+        line-height: 1.5;
+    }
+    .setting-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 0;
+        border-bottom: 1px dashed #333;
+        font-size: 13px;
+    }
+    .setting-row:last-child {
+        border-bottom: none;
+    }
+    .setting-row-label {
+        color: #ccc;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .setting-row-hint {
+        font-size: 11px;
+        color: #777;
+    }
+    .setting-segmented {
+        display: inline-flex;
+        background: #111;
+        border: 1px solid #444;
+        border-radius: 4px;
+        padding: 2px;
+        gap: 2px;
+    }
+    .setting-segmented-btn {
+        padding: 4px 12px;
+        font-size: 12px;
+        color: #aaa;
+        background: transparent;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s;
+    }
+    .setting-segmented-btn.active {
+        background: #007acc;
+        color: #fff;
+        font-weight: bold;
+    }
 </style>
 
 <div id="app" v-cloak>
