@@ -2,6 +2,7 @@
 import * as WebSocket from 'ws';
 // Removed Node path import; using custom getBaseName function
 import { startMcpRouter } from './ipc-router';
+import { applyWebviewProxy, getWebviewProxyConfig, WebviewProxyConfig } from './proxy-manager';
 declare const Editor: any;
 
 let _isSceneActive = false;
@@ -485,6 +486,26 @@ module.exports = {
             }).catch((e: any) => {
                 if (event.reply) event.reply(e);
             });
+        },
+        /**
+         * 设置 Webview 代理配置
+         * @param event IPC 事件对象
+         * @param config 代理配置数据
+         */
+        'set-webview-proxy'(event: any, config: WebviewProxyConfig) {
+            applyWebviewProxy(config).then(() => {
+                if (event.reply) event.reply(null, { success: true });
+            }).catch((e: any) => {
+                if (event.reply) event.reply(e);
+            });
+        },
+        /**
+         * 获取 Webview 代理配置
+         * @param event IPC 事件对象
+         */
+        'get-webview-proxy'(event: any) {
+            const config = getWebviewProxyConfig();
+            if (event.reply) event.reply(null, config);
         }
     },
 };
