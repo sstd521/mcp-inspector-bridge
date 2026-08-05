@@ -30,4 +30,8 @@ tools/
 **/node_modules
 **/package-lock.json
 **/dump.json
-.claude/settings.local.json
+
+# Agent Tooling & Local Agent Directories
+.agent/
+.claude/
+.codewhale/
