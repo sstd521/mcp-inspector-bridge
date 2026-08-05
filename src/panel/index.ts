@@ -105,7 +105,8 @@ module.exports = Editor.Panel.extend({
                     layoutSystem.selectedResolution,
                     (payload: any, auto: boolean) => nodeSystem.onNodeSelect(payload, auto),
                     () => profilerSystem.startTickPolling(),
-                    () => profilerSystem.stopTickPolling()
+                    () => profilerSystem.stopTickPolling(),
+                    (uuid: string) => nodeSystem.locateAndExpandNode(uuid)
                 );
 
                 const devToolsSystem = useDevTools(globalState, gameView, devtoolsView, activeTab, layoutSystem.rightPanelWidth);

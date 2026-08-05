@@ -9,7 +9,8 @@ export function useGameView(
     selectedResolution: any,
     onNodeSelectFallback: any,
     onStartPolling?: () => void,
-    onStopPolling?: () => void
+    onStopPolling?: () => void,
+    locateAndExpandNode?: (uuid: string) => void
 ) {
     const isShowFPS = ref(false);
     const isAudioMuted = ref(false);
@@ -764,23 +765,28 @@ export function useGameView(
                     try {
                         globalState.isNodePickerActive = false;
                         if (uuid) {
-                            const nt: any = nodeTreeRef.value;
-                            if (nt && typeof nt.expandToNode === 'function') {
-                                const success = nt.expandToNode(uuid);
-                                if (!success) {
-                                    console.warn(`[Bridge] 节点树缓存中未找到节点(UUID: ${uuid})，启用属性兜底同步`);
-                                    onNodeSelectFallback({ id: uuid }, true);
-                                    
-                                    try {
-                                        const syncCode = "if(window.__mcpSyncNodeTree) { window.__mcpSyncNodeTree(); }";
-                                        const wv: any = gameView.value;
-                                        if (wv && typeof wv.executeJavaScript === 'function') {
-                                            wv.executeJavaScript(syncCode).catch(() => {});
-                                        }
-                                    } catch(err) {}
-                                }
+                            if (typeof locateAndExpandNode === 'function') {
+                                locateAndExpandNode(uuid);
                             } else {
-                                onNodeSelectFallback({ id: uuid }, true);
+                                // 兜底降级处理：未注入定位函数时保持原内联逻辑
+                                const nt: any = nodeTreeRef.value;
+                                if (nt && typeof nt.expandToNode === 'function') {
+                                    const success = nt.expandToNode(uuid);
+                                    if (!success) {
+                                        console.warn(`[Bridge] 节点树缓存中未找到节点(UUID: ${uuid})，启用属性兜底同步`);
+                                        onNodeSelectFallback({ id: uuid }, true);
+                                        
+                                        try {
+                                            const syncCode = "if(window.__mcpSyncNodeTree) { window.__mcpSyncNodeTree(); }";
+                                            const wv: any = gameView.value;
+                                            if (wv && typeof wv.executeJavaScript === 'function') {
+                                                wv.executeJavaScript(syncCode).catch(() => {});
+                                            }
+                                        } catch(err) {}
+                                    }
+                                } else {
+                                    onNodeSelectFallback({ id: uuid }, true);
+                                }
                             }
                         } else {
                             globalState.nodeDetail = null;
