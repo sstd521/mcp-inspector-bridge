@@ -1,15 +1,18 @@
 // @ts-nocheck
+import { getCcEngine, safeGetCcEngine } from './engine-helper';
+
 export function syncNodeTree() {
-    const scene = window.cc ? window.cc.director.getScene() : null;
+    const ccEng = safeGetCcEngine();
+    const scene = ccEng ? ccEng.director.getScene() : null;
     if (!scene) return;
 
     const treeData = serializeNode(scene, 0);
-    const pauseStatus = (typeof window.cc.game !== 'undefined' && window.cc.game.isPaused) ? window.cc.game.isPaused() : false;
+    const pauseStatus = (ccEng && typeof ccEng.game !== 'undefined' && ccEng.game.isPaused) ? ccEng.game.isPaused() : false;
     
     let atlasCount = undefined;
     try {
-        if (window.cc && window.cc.dynamicAtlasManager) {
-            atlasCount = window.cc.dynamicAtlasManager.atlasCount;
+        if (ccEng && ccEng.dynamicAtlasManager) {
+            atlasCount = ccEng.dynamicAtlasManager.atlasCount;
         }
     } catch(e) {}
 
@@ -26,8 +29,10 @@ export function serializeNode(node, currentPrefabDepth = 0) {
     let isActiveInHierarchy = true;
     let isScene = false;
 
+    const ccEng = safeGetCcEngine();
+
     // 彻底规避 cc.Scene 会在 getter 内部直接用 cc.error 打印日志的问题
-    if (typeof window.cc !== 'undefined' && node instanceof window.cc.Scene) {
+    if (ccEng && node instanceof ccEng.Scene) {
         isActive = true;
         isActiveInHierarchy = true;
         isScene = true;

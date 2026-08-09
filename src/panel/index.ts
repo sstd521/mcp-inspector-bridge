@@ -2,7 +2,7 @@ declare const Editor: any;
 import * as fs from 'fs';
 import * as path from 'path';
 
-const { createApp, ref, onMounted, watch, computed } = require('vue');
+const { createApp, ref, reactive, onMounted, watch, computed } = require('vue');
 const { NodeTree } = require('./components/NodeTree');
 const { NodeInspector } = require('./components/NodeInspector');
 const { RenderDebugger } = require('./components/RenderDebugger');
@@ -12,6 +12,7 @@ const { useScriptSystem } = require('./composables/useScriptSystem');
 // 模块级引用，供 messages handlers 访问
 let _scriptSystem: any = null;
 let _refreshGameFn: (() => void) | null = null;
+let _gameViewSystem: any = null;
 
 const templateRaw = fs.readFileSync(path.join(__dirname, '../../src/panel/index.html'), 'utf-8');
 const preloadUrlResolved = 'file:///' + Editor.url('packages://mcp-inspector-bridge/dist/preload.js').replace(/\\/g, '/');
@@ -40,18 +41,29 @@ module.exports = Editor.Panel.extend({
 
     ready() {
         const panelAppElement = this.$app;
+        if (!panelAppElement) return;
 
-        const app = createApp({
-            components: { NodeTree, 'node-inspector': NodeInspector, 'render-debugger': RenderDebugger, 'script-manager': ScriptManager },
-            setup() {
-                const activeTab = ref(0);
-                const wrapperSize = ref({ width: 0, height: 0 });
+        try {
+            const app = createApp({
+                components: { NodeTree, 'node-inspector': NodeInspector, 'render-debugger': RenderDebugger, 'script-manager': ScriptManager },
+                setup() {
+                    const activeTab = ref(0);
+                    const activeSettingSubTab = ref('appearance' as 'appearance' | 'network-mcp' | 'media-res' | 'logs-diag');
+                    const wrapperSize = ref({ width: 0, height: 0 });
 
-                // Vue Refs
-                const gameView = ref(null);
-                const devtoolsView = ref(null);
-                const wrapMount = ref(null);
-                const nodeTreeRef = ref(null);
+                    // 代理相关状态 (Proxy Config State)
+                    const showProxyModal = ref(false);
+                    const proxyForm = reactive({
+                        mode: 'system', // 'system' | 'direct' | 'custom'
+                        server: '',
+                        bypassLocalhost: true
+                    });
+
+                    // Vue Refs
+                    const gameView = ref(null);
+                    const devtoolsView = ref(null);
+                    const wrapMount = ref(null);
+                    const nodeTreeRef = ref(null);
 
                 // Initialize Composables
                 const layoutSystem = useLayout(globalState, wrapMount, wrapperSize);
@@ -94,7 +106,8 @@ module.exports = Editor.Panel.extend({
                     layoutSystem.selectedResolution,
                     (payload: any, auto: boolean) => nodeSystem.onNodeSelect(payload, auto),
                     () => profilerSystem.startTickPolling(),
-                    () => profilerSystem.stopTickPolling()
+                    () => profilerSystem.stopTickPolling(),
+                    (uuid: string) => nodeSystem.locateAndExpandNode(uuid)
                 );
 
                 // --- 用户脚本系统 ---
@@ -116,6 +129,7 @@ module.exports = Editor.Panel.extend({
                 _scriptSystem = scriptSystem;
 
                 _refreshGameFn = gameViewSystem.refreshGame;
+                _gameViewSystem = gameViewSystem;
 
                 const openScriptEditor = (fileName?: string, content?: string) => {
                     globalState.scriptEditorFileName = fileName || '';
@@ -461,6 +475,29 @@ mcp.log('脚本已加载');
                         panelAppElement.style.zoom = globalState.uiScale.toString();
                         panelAppElement.style.setProperty('--base-font-size', globalState.baseFontSize + 'px');
                     }
+
+                    // 从 LocalStorage 恢复代理配置并发送至主进程
+                    try {
+                        const savedProxy = window.localStorage.getItem('mcp_webview_proxy_config');
+                        if (savedProxy) {
+                            const parsed = JSON.parse(savedProxy);
+                            if (parsed && typeof parsed === 'object') {
+                                if (parsed.mode) proxyForm.mode = parsed.mode;
+                                if (parsed.server !== undefined) proxyForm.server = parsed.server;
+                                if (parsed.bypassLocalhost !== undefined) proxyForm.bypassLocalhost = parsed.bypassLocalhost;
+
+                                if (typeof Editor !== 'undefined') {
+                                    Editor.Ipc.sendToMain('mcp-inspector-bridge:set-webview-proxy', {
+                                        mode: proxyForm.mode,
+                                        server: proxyForm.server,
+                                        bypassLocalhost: proxyForm.bypassLocalhost
+                                    });
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[Proxy] 读取本地代理配置失败:', e);
+                    }
                     
                     window.addEventListener('mcp-status-changed', ((e: CustomEvent) => {
                         globalState.mcpStatus = e.detail;
@@ -767,8 +804,41 @@ mcp.log('脚本已加载');
                     }
                 };
 
+                /**
+                 * 保存代理配置至 LocalStorage 并发送 IPC 通道告知主进程更新设置，随后触发 Webview 重新加载
+                 */
+                const saveProxySettings = () => {
+                    const payload = {
+                        mode: proxyForm.mode,
+                        server: proxyForm.server,
+                        bypassLocalhost: proxyForm.bypassLocalhost
+                    };
+                    try {
+                        window.localStorage.setItem('mcp_webview_proxy_config', JSON.stringify(payload));
+                    } catch (e) {
+                        console.warn('[Proxy] 保存代理配置至 localStorage 失败:', e);
+                    }
+
+                    if (typeof Editor !== 'undefined') {
+                        Editor.Ipc.sendToMain('mcp-inspector-bridge:set-webview-proxy', payload);
+                    }
+
+                    showProxyModal.value = false;
+
+                    if (gameViewSystem && typeof gameViewSystem.refreshGame === 'function') {
+                        gameViewSystem.refreshGame();
+                    } else if (_refreshGameFn) {
+                        _refreshGameFn();
+                    }
+                };
+
                 return {
+                    showProxyModal,
+                    proxyForm,
+                    saveProxySettings,
+
                     activeTab,
+                    activeSettingSubTab,
                     globalState,
                     gameView,
                     devtoolsView,
@@ -861,8 +931,12 @@ mcp.log('脚本已加载');
             }
         });
 
+        this._vueApp = app;
         app.mount(this.$app);
-    },
+    } catch(e: any) {
+        console.error('[Bridge] Vue app mount error:', e);
+    }
+},
 
     messages: {
         'mcp-query-selected-node'(this: any, event: any, reqId: string) {
@@ -1144,17 +1218,26 @@ mcp.log('脚本已加载');
                 if (event.reply) event.reply(null, { success: false, message: "刷新失败: " + e.message });
             }
         },
+        'switch-run-mode'(this: any, event: any, mode: 'preview' | 'build' | 'custom') {
+            if (_gameViewSystem && typeof _gameViewSystem.switchRunMode === 'function') {
+                _gameViewSystem.switchRunMode(mode);
+            }
+        },
     },
 
     show() {
-        window.dispatchEvent(new CustomEvent('panel-show'));
+        try { window.dispatchEvent(new CustomEvent('panel-show')); } catch(e) {}
     },
 
     hide() {
-        window.dispatchEvent(new CustomEvent('panel-hide'));
+        try { window.dispatchEvent(new CustomEvent('panel-hide')); } catch(e) {}
     },
 
     close() {
-        window.dispatchEvent(new CustomEvent('panel-close'));
+        try { window.dispatchEvent(new CustomEvent('panel-close')); } catch(e) {}
+        if (this._vueApp) {
+            try { this._vueApp.unmount(); } catch(e) {}
+            this._vueApp = null;
+        }
     }
 });

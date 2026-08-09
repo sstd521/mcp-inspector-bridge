@@ -52,4 +52,12 @@ export const globalState = reactive({
     scriptEditorVisible: false as boolean,
     scriptEditorContent: '' as string,
     scriptEditorFileName: '' as string,
+    /** 运行模式：'preview' (预览模式) | 'build' (Build 模式) | 'custom' (自定义页面) */
+    runMode: 'preview' as 'preview' | 'build' | 'custom',
+    /** 自定义 URL 页面地址 */
+    customUrl: '' as string,
+    /** 是否正在进行模式切换（用于防抖与重置保护） */
+    isSwitchingMode: false as boolean,
+    /** Build 模式下是否成功检测到 Web 构建包产物 */
+    isBuildPackageFound: true as boolean,
 });

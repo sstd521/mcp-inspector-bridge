@@ -1,6 +1,73 @@
 # 更新日志 (Update Log)
 
-本项目记录 `mcp-inspector-bridge` 的重大里程碑、架构变更与缺陷修复记录。
+## [Unreleased] - 2026-08-05
+
+### ✨ 新特性与改进
+
+- **节点拾取器自动切换节点树 Tab 并定位 (Node Picker Auto Switch Tab)**：
+  - **跨 Tab 自动定位**：使用 🎯 节点拾取器在场景中选中节点时，若面板当前不在「节点树」Tab，自动切换至节点树 Tab，并展开所有长辈节点、高亮选中并平滑居中滚动显示目标节点。
+  - **统一跨视图定位方法 `locateAndExpandNode`**：在 `useNodeSystem` 中新增并导出统一定位方法（自动切 Tab + `nextTick` DOM 渲染感知 + `expandToNode` 展开高亮），渲染调试器的跨视图定位逻辑重构为复用同一方法。
+  - **兜底同步机制**：节点树缓存未命中时自动触发属性兜底同步并请求场景端重同步节点树（`__mcpSyncNodeTree`）；点击空白区域仅退出拾取状态，不误切 Tab。
+
+---
+
+## [Unreleased] - 2026-07-31
+
+### ✨ 新特性与改进
+
+- **Webview 独立网络代理接管支持 (Webview Session Proxy Management)**：
+  - **Electron Partition 隔离**：给底层游戏 Webview 分配独立的 Session 分区 (`persist:game-preview`)，使代理配置仅针对游戏预览流量生效，隔离并彻底杜绝污染 Cocos Creator 编辑器本体及其他扩展的网络环境。
+  - **多模式代理控制**：支持 `跟随系统 (system)`、`强制直连 (direct)` 以及 `自定义代理服务器 (custom)` 三种代理模式，完美兼容 HTTP 与 SOCKS5 代理协议。
+  - **Localhost 避让保护**：自定义代理模式下默认开启 `localhost;127.0.0.1;<loopback>` 本地环回避直连规则，确保本地游戏预览 HTML (`http://localhost:7456`) 不会被代理阻塞。
+  - **偏好设置 Tab 集成与全持久化**：
+    - 在面板右侧「⚙️ 偏好设置 (Tab 6)」选项卡中内置 `🌐 游戏 Webview 网络代理设置` 独立卡片。
+    - 代理设置通过 `LocalStorage` 全程持久化记录，保存后自动同步至主进程并触发 Webview 热重载生效。
+    - 顶部工具栏新增 🌐 快捷控制图标，点击可直达偏好设置代理配置区域。
+
+---
+
+## [Unreleased] - 2026-07-29
+
+### ✨ 新特性与改进
+
+- **非侵入式 Webview 日志监听重构 (Non-Intrusive IPC Log Listener)**：
+  - **解耦 CDP Debugger 与 Proxy 代理**：彻底移除后台自动挂载的 `webContents.debugger` 与控制台 Proxy 拦截逻辑，消除了后台调试器与原生 Chrome DevTools 的 Debugger 独占冲突。
+  - **原生 DOM `console-message` + IPC 转发**：通过在扩展面板层监听 `<webview>` 的原生 `console-message` 事件，将捕获到的控制台日志无感转发至主进程日志缓冲区。
+  - **完美保留调试上下文与源码映射**：零侵入、零污染，确保游戏在预览模式下的 TypeScript SourceMap 映射与开发者工具的 Console 控制台源码归属 100% 正确。
+
+---
+
+## [Unreleased] - 2026-07-24
+
+### ✨ 新特性与改进
+
+- **Build 模式与自定义 URL 运行支持 (Build Mode & Custom URL Support)**：
+  - **多运行模式集成**：面板顶部工具栏新增模式选择下拉框（预览模式 / Build 模式 / 自定义页面），支持在扩展 Webview 中运行 Web 平台构建产物或直接加载指定的外部 Custom URL。
+  - **动态 Web 服务路由探针检测 (`checkBuildPackageAvailable`)**：
+    - 精准探测 Cocos Creator 本地 Preview 服务器 (`http://localhost:${previewPort}/build/index.html`) 的 `/build/` Web 服务路由激活状态。
+    - 结合 HTML 页面签名解析（识别 `GameCanvas` / `cocos2d-js` 等标志），自动排查 Express 404 及预览模式回退页面的伪 200 误判。
+  - **Web 服务未启动引导卡片 (`.build-empty-card`)**：
+    - 当选择 Build 模式且编辑器重启后未在当前会话激活 Build Web 服务时，自动在 Webview 容器上层（`#game-mount-wrap`）渲染深色毛玻璃卡片，提供明确的生命周期提示与一键 `[ 🔄 重新检测 Web 服务 ]` 按钮，并在各种分辨率手机选择下保持良好的容器居中适配。
+  - **多层引擎查找与安全访问器 (`engine-helper.ts`)**：
+    - 实现了 `getCcEngine()` 与 `safeGetCcEngine()`，全面兼容 Preview 模式（`window.cc`）、Build 模式（`iframe#GameDiv`）及子框架 (`window.frames`) 引擎实例检索。
+    - 挂载至 `window.safeGetCcEngine` 全局作用域，彻底消除在 Build 模式下节点选择、拾取与高亮绘制时引发的 `ReferenceError: getCcEngine is not defined` 崩溃。
+  - **通用全框架探针注入器 (`preload.ts`)**：
+    - 建立 `injectProbeIntoTarget` 与 500ms 动态 `iframe` 轮询扫描机制，确保顶级 Window 与任意子框架 `iframe` 都能自动挂载 `__mcpInspector` 通信网桥与探针。
+
+- **节点导出 PSD 高保真还原优化 (PSD Export High-Fidelity Rendering)**：
+  - **图标与 Sprite 等比例缩放渲染**：移除了 `rasterizeSprite` 中的 `originalSize` 尺寸强制覆写，并在 PSD 绘制层中改用原生 Canvas 比例渲染，彻底解决了小食物图标等子节点导出后画面被 1:1 裁切或拉伸失真的问题。
+  - **Spine 骨骼动画包围盒与场景独立相机**：引入 Spine Slot 顶点矩阵 AABB 计算，并在场景根节点挂载独立离屏相机，消除父节点 scale / anchor 偏移的影响，提升骨骼动画图层渲染质量。
+  - **9 宫格 Trim 边距偏移修正**：在 `drawNineSlice` 九宫格渲染中扣除图集裁切产生的透明 Trim 偏移，保证 Sampling 采样区位于纯净背景填充色，修复气泡框中间透明漏洞与边界拉伸缝隙。
+  - **探针代码热加载同步**：在导出 PSD 前通过 `wv.executeJavaScript` 动态读取并强制同步 `dist/probe.js` 最新运行时，无需重新构建扩展即可使探针代码生效。
+
+- **面板 UI 与体验细节优化 (Panel UI & Stability Optimizations)**：
+  - **弹出窗口防报错与安全卸载**：在 `src/panel/index.ts` 中增加窗口弹出与嵌入切换时的 DOM 安全销毁与状态清理逻辑，彻底修复面板弹窗后关闭报错的问题。
+  - **Cocos 信息面板适配与滚动条收敛**：修正了 Cocos 信息面板右侧与底部的 Padding 挤压问题，将节点树详情面板的多层滚动条合并归一为单层滚动条。
+  - **属性组件布局修正**：优化了组件属性列表中 Array 数组坐标数据的样式与 Flex 弹性容器宽度，消除数据重叠挤压现象。
+  - **日志清理**：清理了桥接布局相关多余的调试 Console 输出，保持控制台整洁。
+
+---
+
 ## [Unreleased] - 2026-07-20
 
 ### ✨ 新特性

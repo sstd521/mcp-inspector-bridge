@@ -1,6 +1,8 @@
 // @ts-nocheck
+import { getCcEngine } from './engine-helper';
+
 export function initProfiler() {
-    let lastFrames = window.cc.director.getTotalFrames();
+    let lastFrames = 0;
     let lastTime = Date.now();
     let currentFps = 0;
 
@@ -18,38 +20,54 @@ export function initProfiler() {
     const frameDeltas: number[] = [];
     let lastFrameTime = 0;
 
-    // 实时逻辑消耗窃听器
-    window.cc.director.on(window.cc.Director.EVENT_BEFORE_UPDATE, () => {
-        logicStart = performance.now();
-        // 记录帧间间隔
-        if (lastFrameTime > 0) {
-            const delta = logicStart - lastFrameTime;
-            frameDeltas.push(delta);
-            if (frameDeltas.length > FRAME_TIME_WINDOW) frameDeltas.shift();
-        }
-        lastFrameTime = logicStart;
-    });
-    window.cc.director.on(window.cc.Director.EVENT_AFTER_UPDATE, () => {
-        accumulatedLogicTime += (performance.now() - logicStart);
-        logicFrames++;
-    });
+    let isEventsHooked = false;
+    function tryHookDirectorEvents() {
+        if (isEventsHooked) return;
+        const ccEng = getCcEngine();
+        if (!ccEng || !ccEng.director) return;
+        isEventsHooked = true;
 
-    // 实时渲染消耗窃听器
-    window.cc.director.on(window.cc.Director.EVENT_BEFORE_DRAW, () => {
-        renderStart = performance.now();
-    });
-    window.cc.director.on(window.cc.Director.EVENT_AFTER_DRAW, () => {
-        accumulatedRenderTime += (performance.now() - renderStart);
-        renderFrames++;
-    });
+        lastFrames = ccEng.director.getTotalFrames ? ccEng.director.getTotalFrames() : 0;
+
+        // 实时逻辑消耗窃听器
+        ccEng.director.on(ccEng.Director.EVENT_BEFORE_UPDATE, () => {
+            logicStart = performance.now();
+            // 记录帧间间隔
+            if (lastFrameTime > 0) {
+                const delta = logicStart - lastFrameTime;
+                frameDeltas.push(delta);
+                if (frameDeltas.length > FRAME_TIME_WINDOW) frameDeltas.shift();
+            }
+            lastFrameTime = logicStart;
+        });
+        ccEng.director.on(ccEng.Director.EVENT_AFTER_UPDATE, () => {
+            accumulatedLogicTime += (performance.now() - logicStart);
+            logicFrames++;
+        });
+
+        // 实时渲染消耗窃听器
+        ccEng.director.on(ccEng.Director.EVENT_BEFORE_DRAW, () => {
+            renderStart = performance.now();
+        });
+        ccEng.director.on(ccEng.Director.EVENT_AFTER_DRAW, () => {
+            accumulatedRenderTime += (performance.now() - renderStart);
+            renderFrames++;
+        });
+    }
+
+    tryHookDirectorEvents();
 
     // 缓存给主进程轮询拿的变量
     let displayLogicTime = 0;
     let displayRenderTime = 0;
 
     setInterval(() => {
+        tryHookDirectorEvents();
+        const ccEng = getCcEngine();
+        if (!ccEng || !ccEng.director) return;
+
         const now = Date.now();
-        const frames = window.cc.director.getTotalFrames();
+        const frames = ccEng.director.getTotalFrames ? ccEng.director.getTotalFrames() : 0;
         const dt = (now - lastTime) / 1000;
         if (dt > 0) {
             currentFps = Math.max(0, Math.round((frames - lastFrames) / dt));
@@ -72,12 +90,13 @@ export function initProfiler() {
     window.__mcpProfilerTick = function () {
         // 读取 DrawCall: 它是单帧即时数据，可以直接拿 renderer 的
         let drawCall = 0;
+        const ccEng = getCcEngine();
 
         try {
-            if (window.cc.renderer && typeof window.cc.renderer.drawCalls !== 'undefined') {
-                drawCall = window.cc.renderer.drawCalls;
-            } else if (window.cc.profiler_stats) {
-                drawCall = window.cc.profiler_stats.drawCall || 0;
+            if (ccEng && ccEng.renderer && typeof ccEng.renderer.drawCalls !== 'undefined') {
+                drawCall = ccEng.renderer.drawCalls;
+            } else if (ccEng && ccEng.profiler_stats) {
+                drawCall = ccEng.profiler_stats.drawCall || 0;
             }
         } catch (e) { }
 
@@ -105,7 +124,8 @@ export function initProfiler() {
     };
 
     window.__mcpCountNodes = function () {
-        const scene = window.cc.director.getScene();
+        const ccEng = getCcEngine();
+        const scene = ccEng ? ccEng.director.getScene() : null;
         if (!scene) return 0;
         function count(node: any): number {
             let n = 1;

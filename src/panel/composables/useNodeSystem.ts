@@ -299,17 +299,36 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
             `).catch((err: any) => console.error("[RenderDebugger] executeJavaScript 抛出异常:", err));
     };
 
-    const onRenderDebuggerLocate = (id: string) => {
-        activeTab.value = 0;
+    /**
+     * 定位并展开指定 UUID 的节点（包含自动切换至节点树 Tab 逻辑）
+     * @param uuid 目标节点 UUID
+     */
+    const locateAndExpandNode = (uuid: string) => {
+        if (!uuid) return;
+        activeTab.value = 0; // 自动切换至节点树 Tab
         nextTick(() => {
             const nt: any = nodeTreeRef.value;
-            if (nt && nt.expandToNode) {
-                const success = nt.expandToNode(id);
-                if (!success && typeof Editor !== 'undefined') {
-                    Editor.warn(`[ RenderDebugger ] 跨视图定位失败：查找不到 UUID 为 ${id} 的节点。`);
+            if (nt && typeof nt.expandToNode === 'function') {
+                const success = nt.expandToNode(uuid);
+                if (!success) {
+                    console.warn(`[Bridge] 节点树缓存中未找到节点(UUID: ${uuid})，启用属性兜底同步`);
+                    onNodeSelect({ id: uuid }, true);
+                    try {
+                        const syncCode = "if(window.__mcpSyncNodeTree) { window.__mcpSyncNodeTree(); }";
+                        const wv: any = gameView.value;
+                        if (wv && typeof wv.executeJavaScript === 'function') {
+                            wv.executeJavaScript(syncCode).catch(() => {});
+                        }
+                    } catch(err) {}
                 }
+            } else {
+                onNodeSelect({ id: uuid }, true);
             }
         });
+    };
+
+    const onRenderDebuggerLocate = (id: string) => {
+        locateAndExpandNode(id);
     };
 
     let locateResourceTimer: any = null;
@@ -510,6 +529,17 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
 
         if (typeof Editor !== 'undefined') Editor.log(`[PSD Export] 1. 开始导出节点: ${nodeName} (${uuid})`);
 
+        // 强行注入最新编译的 probe.js 确保热更新
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const probePath = path.join(__dirname, '../../probe.js');
+            if (fs.existsSync(probePath)) {
+                const freshProbeCode = fs.readFileSync(probePath, 'utf-8');
+                await wv.executeJavaScript(freshProbeCode);
+            }
+        } catch (injectErr) {}
+
         const code = `window.__mcpCrawler ? window.__mcpCrawler.exportNodeAsPsdData('${uuid}') : null`;
         try {
             if (typeof Editor !== 'undefined') Editor.log(`[PSD Export] 2. 正在向 WebView 发送脚本抓取节点数据...`);
@@ -587,7 +617,7 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
                     canvas.height = item.height;
                     const ctx = canvas.getContext('2d');
                     if (ctx) {
-                        ctx.drawImage(item.img, 0, 0);
+                        ctx.drawImage(item.img, 0, 0, item.width, item.height);
                     }
                     
                     if (typeof Editor !== 'undefined') {
@@ -648,6 +678,7 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
         setNodePickerContinuous,
         onRenderDebuggerToggle,
         onRenderDebuggerLocate,
+        locateAndExpandNode,
         locateResource,
         onLocateNode,
         onLocateAsset,
