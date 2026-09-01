@@ -711,7 +711,7 @@
                         style="margin:0; accent-color:#09f;">连续
                 </label>
                 <button class="icon-btn" style="cursor:help"
-                    :title="globalState.mcpStatus.active ? 'MCP已启动，端口：' + globalState.mcpStatus.port : 'MCP启动失败，原因：' + globalState.mcpStatus.error">
+                    :title="globalState.mcpStatus.active ? 'Inspector 兼容桥接服务已启动，端口：' + globalState.mcpStatus.port : 'Inspector 兼容桥接服务启动失败，原因：' + globalState.mcpStatus.error">
                     <div
                         :style="{ width: '10px', height: '10px', borderRadius: '50%', background: globalState.mcpStatus.active ? '#4caf50' : '#f44336' }">
                     </div>
@@ -1447,62 +1447,12 @@
                             </div>
                         </div>
 
-                        <!-- MCP 客户端配置卡片 -->
+                        <!-- Game Agent 接管说明 -->
                         <div class="setting-card">
-                            <div class="setting-card-title">🛡️ MCP 宿主 AI 客户端配置</div>
-                            <div class="setting-card-desc">自动检测与分发 MCP Inspector Bridge 工具链连接配置至宿主 AI 客户端。</div>
-
-                            <div v-if="globalState.mcpScanning" style="color: #ffb74d; margin-bottom: 10px;">正在扫描系统 AI 客户端配置...</div>
-
-                            <div v-if="!globalState.mcpScanning && globalState.mcpClientList.length > 0">
-                                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-                                    <div style="display: flex; align-items: center; gap: 8px;">
-                                        <span style="color: #aaa; width: 65px; font-size: 12px;">宿主平台:</span>
-                                        <select v-model="globalState.mcpSelectedClientId" style="background:#111; color:#fff; padding:4px; border-radius: 3px; border:1px solid #555; width: 160px; font-size: 12px;">
-                                            <option v-for="client in globalState.mcpClientList" :key="client.id" :value="client.id">{{ client.name }}</option>
-                                        </select>
-                                    </div>
-                                </div>
-
-                                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; background: #1b1b1c; padding: 8px 12px; border-radius: 4px; border: 1px solid #333;" v-if="globalState.mcpClientList[globalState.mcpSelectedClientId]">
-                                    <div style="display: flex; align-items: center; gap: 6px; font-weight: bold; font-size: 12px;">
-                                        <span v-if="globalState.mcpClientList[globalState.mcpSelectedClientId].isError" style="color: #f44336;">🔴 配置损坏</span>
-                                        <template v-else>
-                                            <span v-if="!globalState.mcpClientList[globalState.mcpSelectedClientId].isInstalled" style="color: #f44336;">🔴 未安装</span>
-                                            <span v-else-if="globalState.mcpClientList[globalState.mcpSelectedClientId].isConfigured" style="color: #4caf50;">🟢 已连通</span>
-                                            <span v-else style="color: #ff9800;">🟡 需验证配置</span>
-                                        </template>
-                                    </div>
-                                    <button :disabled="!globalState.mcpClientList[globalState.mcpSelectedClientId].isInstalled"
-                                        :style="{ padding: '4px 14px', background: globalState.mcpClientList[globalState.mcpSelectedClientId].isInstalled ? '#007acc' : '#555', color: 'white', border: 'none', borderRadius: '3px', cursor: globalState.mcpClientList[globalState.mcpSelectedClientId].isInstalled ? 'pointer' : 'not-allowed', fontWeight:'bold', fontSize: '12px' }"
-                                        @click="configureMcpClient(globalState.mcpSelectedClientId)">
-                                        一键配置
-                                    </button>
-                                </div>
-
-                                <details style="margin-bottom: 12px; border-top: 1px dashed #333; padding-top: 8px;">
-                                    <summary style="cursor: pointer; color: #aaa; user-select: none; margin-bottom: 8px; font-size: 12px; outline: none;">手动配置展开</summary>
-
-                                    <div v-if="globalState.mcpClientList[globalState.mcpSelectedClientId] && globalState.mcpClientList[globalState.mcpSelectedClientId].path" style="margin-bottom: 10px;">
-                                        <div style="color: #aaa; font-size: 11px; margin-bottom: 4px;">配置存储路径:</div>
-                                        <div style="display: flex; gap: 5px;">
-                                            <input type="text" v-model="globalState.mcpClientList[globalState.mcpSelectedClientId].path" style="flex:1; background:#111; color:#bbb; border:1px solid #333; border-radius: 3px; padding: 4px; font-size: 11px;" />
-                                            <button style="padding: 2px 8px; background: #444; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;" @click="copyMcpPath(globalState.mcpClientList[globalState.mcpSelectedClientId].path)">复制</button>
-                                        </div>
-                                    </div>
-
-                                    <div style="margin-bottom: 10px;">
-                                        <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 4px;">
-                                            <div style="color: #aaa; font-size: 11px;">数据载荷:</div>
-                                            <button style="padding: 2px 8px; background: #444; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 11px;" @click="copyMcpPayload">复制 JSON</button>
-                                        </div>
-                                        <textarea v-model="globalState.mcpPayload" style="width: 100%; height: 140px; background: #000; color: #4caf50; border: 1px solid #444; border-radius: 4px; padding: 6px; font-family: monospace; font-size: 11px; box-sizing: border-box; resize: vertical;"></textarea>
-                                    </div>
-                                </details>
-
-                                <button style="width: 100%; padding: 7px; background: #333; color: #ccc; border: 1px solid #444; border-radius: 3px; cursor: pointer; text-align: center; font-size: 12px;" @click="configureMcpClient(-1)">
-                                    尝试向所有平台分发配置
-                                </button>
+                            <div class="setting-card-title">🛡️ Game Agent 接管模式</div>
+                            <div class="setting-card-desc">MCP 客户端连接由 Game Agent 统一管理，Inspector 仅提供兼容桥接服务。</div>
+                            <div style="margin-top: 10px; padding: 10px 12px; color: #8bc34a; background: #1b1b1c; border: 1px solid #333; border-radius: 4px; font-family: monospace; font-size: 12px; text-align: center;">
+                                Codex → Game Agent → Inspector
                             </div>
 
                             <div v-if="globalState.mcpInjectLog" style="margin-top: 10px; color: #8bc34a; font-size: 11px; white-space: pre-wrap; background: #111; padding: 6px; border-radius: 3px; border-left: 3px solid #8bc34a;">

@@ -221,26 +221,25 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
                         // ★ get_runtime_logs 优先走主进程 CDP 数据源（零侵入，无需面板 IPC 中转）
                         if (name === 'get_runtime_logs') {
                             try {
+                                const directArgs = {
+                                    tail: args.tail === undefined ? 50 : args.tail,
+                                    level: args.level === undefined ? 'all' : args.level,
+                                    ...(args.sinceCursor === undefined ? {} : { sinceCursor: args.sinceCursor }),
+                                };
                                 const directRes = await new Promise<any>((resolve, reject) => {
                                     const timer = setTimeout(() => reject(new Error('CDP 日志查询超时')), 3500);
                                     Editor.Ipc.sendToMain(
                                         'mcp-inspector-bridge:query-cdp-logs',
-                                        args,
+                                        directArgs,
                                         (err: any, data: any) => { clearTimeout(timer); err ? reject(err) : resolve(data); },
                                         4000
                                     );
                                 });
 
-                                const contentText = JSON.stringify(directRes.result || directRes, null, 2);
-                                // ★ 当日志为空时附加诊断信息
-                                let finalContent = contentText;
-                                if (directRes._debug && (!directRes.result || directRes.result.length === 0)) {
-                                    finalContent = JSON.stringify({
-                                        logs: directRes.result,
-                                        _debug: directRes._debug,
-                                        _hint: 'attached=false 表示未找到预览页面或 debugger attach 失败',
-                                    }, null, 2);
-                                }
+                                const legacyLogs = directRes?.ok === true && Array.isArray(directRes.logs?.items)
+                                    ? directRes.logs.items
+                                    : (directRes.result || directRes);
+                                const finalContent = JSON.stringify(legacyLogs, null, 2);
                                 try {
                                     let resText = finalContent;
                                     if (resText.length > 500) resText = resText.substring(0, 500) + '...[truncated:超长响应已截断]';

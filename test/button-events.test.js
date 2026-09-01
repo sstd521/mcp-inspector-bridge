@@ -229,4 +229,45 @@ assert.strictEqual(UUID_LOOKUP_TOOL_MAP.get_asset_references.timeout, 30000);
 assert.strictEqual(UUID_LOOKUP_TOOL_MAP.scan_missing_asset_references.timeout, 60000);
 assert.strictEqual(UUID_LOOKUP_TOOL_MAP.open_asset_by_uuid.channel, 'uuid_lookup:open-asset-by-main');
 
+let builtPanelDefinition;
+Editor.url = value => value;
+Editor.warn = () => {};
+Editor.Panel = { extend: definition => (builtPanelDefinition = definition) };
+require('../dist/panel/index.js');
+
+const fs = require('fs');
+const path = require('path');
+const packageRoot = path.join(__dirname, '..');
+const sourcePanelHtml = fs.readFileSync(path.join(packageRoot, 'src/panel/index.html'), 'utf8');
+const sourcePanelTs = fs.readFileSync(path.join(packageRoot, 'src/panel/index.ts'), 'utf8');
+const sourceStoreTs = fs.readFileSync(path.join(packageRoot, 'src/panel/store.ts'), 'utf8');
+const builtPanelSource = fs.readFileSync(path.join(packageRoot, 'dist/panel/index.js'), 'utf8');
+const builtStoreSource = fs.readFileSync(path.join(packageRoot, 'dist/panel/store.js'), 'utf8');
+
+for (const panelTemplate of [sourcePanelHtml, builtPanelDefinition.template]) {
+  assert(panelTemplate.includes('Game Agent 接管模式'));
+  assert(panelTemplate.includes('Codex → Game Agent → Inspector'));
+  assert(panelTemplate.includes('Inspector 兼容桥接服务已启动，端口：'));
+}
+for (const oldText of ['MCP 宿主 AI 客户端配置', '正在扫描系统 AI 客户端配置', '一键配置', '手动配置展开', '尝试向所有平台分发配置']) {
+  assert(!sourcePanelHtml.includes(oldText), `obsolete source UI remains: ${oldText}`);
+  assert(!builtPanelDefinition.template.includes(oldText), `obsolete built UI remains: ${oldText}`);
+}
+for (const obsoleteCall of ['mcp-inspector-bridge:mcp-scan-clients', 'mcp-inspector-bridge:mcp-inject-client', 'mcp-inspector-bridge:mcp-get-payload']) {
+  assert(!sourcePanelTs.includes(obsoleteCall), `obsolete source IPC remains: ${obsoleteCall}`);
+  assert(!builtPanelSource.includes(obsoleteCall), `obsolete built IPC remains: ${obsoleteCall}`);
+}
+for (const obsoleteHelper of ['refreshMcpClients', 'fetchMcpPayload', 'configureMcpClient', 'copyMcpPayload', 'copyMcpPath']) {
+  assert(!sourcePanelTs.includes(obsoleteHelper), `obsolete source helper remains: ${obsoleteHelper}`);
+  assert(!builtPanelSource.includes(obsoleteHelper), `obsolete built helper remains: ${obsoleteHelper}`);
+}
+for (const obsoleteState of ['mcpClientList', 'mcpSelectedClientId', 'mcpPayload', 'mcpScanning']) {
+  assert(!sourceStoreTs.includes(obsoleteState), `obsolete source state remains: ${obsoleteState}`);
+  assert(!builtStoreSource.includes(obsoleteState), `obsolete built state remains: ${obsoleteState}`);
+}
+assert(sourceStoreTs.includes('mcpInjectLog'));
+assert(builtStoreSource.includes('mcpInjectLog'));
+assert(sourcePanelTs.includes('showMcpToast'));
+assert(builtPanelSource.includes('showMcpToast'));
+
 console.log('button-events.test.js: ok');

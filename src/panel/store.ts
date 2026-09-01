@@ -30,10 +30,6 @@ export const globalState = reactive({
     uiScale: 1.0 as number,
     baseFontSize: 13 as number,
     inspectorLayout: 'horizontal' as 'horizontal' | 'vertical',
-    mcpClientList: [] as any[],
-    mcpSelectedClientId: 0 as number,
-    mcpPayload: '' as string,
-    mcpScanning: false as boolean,
     mcpInjectLog: '' as string,
     mcpLogs: [] as Array<{time: string, type: 'req'|'res'|'err', content: string}>,
     // 用户脚本系统

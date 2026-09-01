@@ -40,6 +40,14 @@ let _wss: WebSocket.Server | null = null;
 let _mcpStatus = { active: false, port: 4456, error: 'Initializing...' };
 let _logHeartbeatTimer: any = null;
 
+function isRuntimeLogQuery(value: any): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) return false;
+    if (!Object.keys(value).every(key => key === 'tail' || key === 'level' || key === 'sinceCursor')) return false;
+    return (value.tail === undefined || typeof value.tail === 'number')
+        && (value.level === undefined || typeof value.level === 'string')
+        && (value.sinceCursor === undefined || typeof value.sinceCursor === 'number');
+}
+
 /**
  * mcp-inspector-bridge: 主进程入口
  */
@@ -78,14 +86,13 @@ module.exports = {
     },
 
     unload() {
-        if (_wss) {
-            _wss.close();
-            _wss = null;
-        }
-        if (_logHeartbeatTimer) {
-            clearInterval(_logHeartbeatTimer);
-            _logHeartbeatTimer = null;
-        }
+        const router = _wss;
+        _wss = null;
+        try { router?.close(); } catch (_) {}
+        const timer = _logHeartbeatTimer;
+        _logHeartbeatTimer = null;
+        try { if (timer) clearInterval(timer); } catch (_) {}
+        try { require('./cdp-log-listener').detachCdpListener(); } catch (_) {}
     },
 
     // 注册跨进程 IPC 消息侦听器
@@ -432,7 +439,19 @@ module.exports = {
             // 懒启动 CDP 监听器（首次查询时自动 attach）
             async function handle() {
                 try {
+                    if (!isRuntimeLogQuery(args)) {
+                        if (event.reply) event.reply(null, {
+                            ok: false,
+                            error: { code: 'INVALID_RUNTIME_LOG_QUERY', message: 'Invalid runtime log query.' },
+                            status: { attached: false, size: 0, method: 'unavailable', eventCount: 0, injection: false, cdp: false },
+                        });
+                        return;
+                    }
                     const { initCdpLogListener, getCdpLogs, getCdpStatus } = require('./cdp-log-listener');
+                    const input = args;
+                    const tail = Number.isSafeInteger(input.tail) && input.tail >= 1 ? Math.min(input.tail, 100) : 30;
+                    const level = input.level === 'all' || input.level === 'warn' || input.level === 'error' ? input.level : 'warn';
+                    const sinceCursor = Number.isSafeInteger(input.sinceCursor) && input.sinceCursor >= 0 ? input.sinceCursor : 0;
 
                     const status = getCdpStatus();
                     if (!status.attached) {
@@ -443,16 +462,20 @@ module.exports = {
                     }
 
                     if (event.reply) {
-                        const logs = await getCdpLogs(args?.tail || 50, args?.level || 'all');
-                        // ★ 返回诊断信息：CDP 连接状态 + 日志数据
+                        const logs = await getCdpLogs({ tail, level, sinceCursor });
                         event.reply(null, {
-                            _debug: { ...getCdpStatus(), ts: Date.now() },
-                            result: logs,
+                            ok: true,
+                            status: getCdpStatus(),
+                            logs,
                         });
                     }
                 } catch (e: any) {
                     if (event.reply) {
-                        event.reply(null, { error: e.message, _debug: { attached: false, size: 0 } });
+                        event.reply(null, {
+                            ok: false,
+                            error: { code: 'CDP_LOG_QUERY_FAILED', message: 'Unable to query CDP logs.' },
+                            status: { attached: false, size: 0, method: 'unavailable', eventCount: 0, injection: false, cdp: false },
+                        });
                     }
                 }
             }

@@ -510,9 +510,6 @@ mcp.log('脚本已加载');
                             }
                         });
                         
-                        refreshMcpClients();
-                        fetchMcpPayload();
-
                         // 恢复已安装的用户脚本
                         Editor.Ipc.sendToMain('mcp-inspector-bridge:script-list-files', {}, (e3: any, files: any[]) => {
                             if (files && Array.isArray(files)) {
@@ -539,28 +536,6 @@ mcp.log('脚本已加载');
                     }
                 });
 
-                const refreshMcpClients = () => {
-                    globalState.mcpScanning = true;
-                    if (typeof Editor !== 'undefined') {
-                        Editor.Ipc.sendToMain('mcp-inspector-bridge:mcp-scan-clients', (err: any, list: any[]) => {
-                            globalState.mcpScanning = false;
-                            if (!err && list) {
-                                globalState.mcpClientList = list;
-                            }
-                        });
-                    }
-                };
-                
-                const fetchMcpPayload = () => {
-                    if (typeof Editor !== 'undefined') {
-                        Editor.Ipc.sendToMain('mcp-inspector-bridge:mcp-get-payload', (err: any, pl: string) => {
-                            if (!err && pl) {
-                                globalState.mcpPayload = pl;
-                            }
-                        });
-                    }
-                };
-
                 let _mcpToastTimer: any = null;
                 const showMcpToast = (msg: string) => {
                     globalState.mcpInjectLog = msg;
@@ -570,60 +545,6 @@ mcp.log('脚本已加载');
                         _mcpToastTimer = null;
                     }, 1000);
                 };
-
-                const configureMcpClient = (clientId: number = -1) => {
-                    globalState.mcpScanning = true;
-                    if (typeof Editor !== 'undefined') {
-                        Editor.Ipc.sendToMain('mcp-inspector-bridge:mcp-inject-client', clientId, (err: any, log: string) => {
-                            if (err) {
-                                showMcpToast("写入由于主进程故障失败: " + err.message);
-                            } else {
-                                showMcpToast(log);
-                            }
-                            // Inject完成之后由于可能更新了其它依赖状态，执行一次重新拉取
-                            refreshMcpClients();
-                        });
-                    } else {
-                        showMcpToast("请在 Cocos Editor 环境中使用。");
-                        globalState.mcpScanning = false;
-                    }
-                };
-
-                const copyMcpPayload = () => {
-                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                        navigator.clipboard.writeText(globalState.mcpPayload).then(() => {
-                            showMcpToast("已复制配置文本至剪贴板。");
-                        }).catch(e => {
-                            showMcpToast("复制失败: " + e);
-                        });
-                    } else {
-                        const textArea = document.createElement("textarea");
-                        textArea.value = globalState.mcpPayload;
-                        document.body.appendChild(textArea);
-                        textArea.select();
-                        try {
-                            document.execCommand('copy');
-                            showMcpToast("已复制配置文本至剪贴板(Fallback)。");
-                        } catch (err: any) {
-                            showMcpToast("复制失败(Fallback): " + err);
-                        }
-                        document.body.removeChild(textArea);
-                    }
-                }
-                
-                const copyMcpPath = (path: string) => {
-                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                        navigator.clipboard.writeText(path);
-                    } else {
-                        const textArea = document.createElement("textarea");
-                        textArea.value = path;
-                        document.body.appendChild(textArea);
-                        textArea.select();
-                        try { document.execCommand('copy'); } catch (err) {}
-                        document.body.removeChild(textArea);
-                    }
-                    showMcpToast("已复制路径至剪贴板。");
-                }
 
                 const isAtlasModalOpen = ref(false);
                 const isCapturingAtlas = ref(false);
@@ -904,10 +825,6 @@ mcp.log('脚本已加载');
                         }
                     },
 
-                    refreshMcpClients,
-                    configureMcpClient,
-                    copyMcpPayload,
-                    copyMcpPath,
                     copyMcpLogs,
 
                     scriptSystem,
