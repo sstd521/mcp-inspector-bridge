@@ -19,6 +19,88 @@ export function useGameView(
     let isEnvInitialized = false;
     let pendingRefresh = false;
     let isWebviewDomReady = false;
+    let refreshGeneration = 0;
+    let cancelRefresh: (() => void) | null = null;
+
+    function observeRefresh(wv: any, generation: number, mode: string) {
+        let dispatchAttempted = false;
+        let settle: (success: boolean) => void;
+        const completion = new Promise<any>(resolve => { settle = success => resolve(success
+            ? { success: true, status: 'completed', completionVerified: true, completionEvidence: 'navigation-finished' }
+            : { success: false, error: 'PREVIEW_REFRESH_INCOMPLETE',
+                ...(dispatchAttempted ? { status: 'partial', verified: false, retryable: false } : {}) }); });
+        const guestId = wv.getWebContentsId();
+        let expectedUrl = '', started = false, finished = false;
+        let frame: any = null;
+        let observer: MutationObserver | null = null;
+        let timer: any = null;
+        let stopWatching = () => {};
+        const normalizeUrl = (url: string) => { try { return new URL(url).href; } catch (_) { return ''; } };
+        const current = () => {
+            try { return generation === refreshGeneration && gameView.value === wv && wv.isConnected !== false &&
+                wv.getWebContentsId() === guestId && globalState.runMode === mode &&
+                (mode !== 'preview' || globalState.isEditorSceneActive); } catch (_) { return false; }
+        };
+        const finish = (success = false) => {
+            if (finished) return;
+            finished = true;
+            const cleanups = [() => clearTimeout(timer), () => stopWatching(), () => observer?.disconnect(),
+                ...viewListeners.map(([name, listener]) => () => wv.removeEventListener(name, listener)),
+                ...['panel-close', 'beforeunload', 'unload'].map(name => () => window.removeEventListener(name, cancel))];
+            for (const cleanup of cleanups) { try { cleanup(); } catch (_) {} }
+            if (cancelRefresh === cancel) cancelRefresh = null;
+            settle(success);
+        };
+        const cancel = () => finish(false);
+        const check = () => { if (!current()) cancel(); };
+        const viewListeners: [string, (event: any) => void][] = [
+            ['did-start-navigation', event => {
+                if (event.isMainFrame !== true || event.isInPlace) return;
+                if (!current()) { cancel(); return; }
+                if (started) { cancel(); return; }
+                if (expectedUrl && normalizeUrl(event.url) === expectedUrl) started = true;
+            }],
+            ['did-frame-navigate', event => {
+                if (!started || event.isMainFrame !== true) return;
+                if (!current() || normalizeUrl(event.url) !== expectedUrl) { cancel(); return; }
+                frame = event;
+            }],
+            ['did-frame-finish-load', event => {
+                if (!started || !frame || event.isMainFrame !== true ||
+                    !Number.isInteger(event.frameProcessId) || !Number.isInteger(event.frameRoutingId) ||
+                    event.frameProcessId !== frame.frameProcessId || event.frameRoutingId !== frame.frameRoutingId) return;
+                try {
+                    if (!current() || normalizeUrl(wv.getURL()) !== expectedUrl) { cancel(); return; }
+                } catch (_) { cancel(); return; }
+                // Keep Vue's bound src unchanged: even assigning the same native src triggers another load.
+                finish(true);
+            }],
+            ['did-fail-load', event => {
+                if (started && event.isMainFrame === true && normalizeUrl(event.validatedURL) === expectedUrl) cancel();
+            }],
+            ['destroyed', cancel], ['render-process-gone', cancel], ['crashed', cancel],
+        ];
+        cancelRefresh = cancel;
+        try {
+            timer = setTimeout(cancel, 8000);
+            stopWatching = watch(() => [globalState.runMode, globalState.isEditorSceneActive, gameView.value], check, { flush: 'sync' });
+            for (const [name, listener] of viewListeners) wv.addEventListener(name, listener);
+            for (const name of ['panel-close', 'beforeunload', 'unload']) window.addEventListener(name, cancel);
+            if (typeof MutationObserver === 'function') {
+                observer = new MutationObserver(check);
+                observer.observe(wv.ownerDocument || document, { childList: true, subtree: true });
+            }
+        } catch (error) { cancel(); throw error; }
+        return { completion, cancel, current: () => !finished && current(), navigate(targetUrl: string) {
+            expectedUrl = normalizeUrl(targetUrl);
+            if (finished || !expectedUrl || !current()) { cancel(); return; }
+            try {
+                // Electron 13's loadURL Promise has no URL/frame identity; observe this request's navigation above.
+                dispatchAttempted = true;
+                Promise.resolve(wv.loadURL(targetUrl)).catch(cancel);
+            } catch (_) { cancel(); }
+        } };
+    }
 
     const executeMacro = (command: string) => {
         const wv: any = gameView.value;
@@ -111,15 +193,21 @@ export function useGameView(
      * 刷新游戏视图
      * 根据当前 runMode 动态计算 targetUrl 并设置 webviewSrc
      */
-    function refreshGame() {
+    async function refreshGame(awaitCompletion = false): Promise<any> {
+        const generation = ++refreshGeneration;
+        if (cancelRefresh) cancelRefresh();
+        const verified = awaitCompletion === true;
+        if (verified) pendingRefresh = false;
         logBridge(`refreshGame 触发 | 模式: ${globalState.runMode} | 场景激活: ${globalState.isEditorSceneActive} | 端口: ${globalState.previewPort}`);
         if (globalState.runMode === 'preview' && !globalState.isEditorSceneActive) {
             warnBridge('预览模式下场景未激活，刷新操作暂被拦截以防报错。');
-            return;
+            return verified ? { success: false, error: 'PREVIEW_UNAVAILABLE' } : false;
         }
 
         const wv: any = gameView.value;
         logBridge(`webview 实例状态: ${!!wv} | clientWidth: ${wv ? wv.clientWidth : 0} | clientHeight: ${wv ? wv.clientHeight : 0}`);
+        if (verified && (!wv || wv.isConnected === false || !wv.clientWidth || !wv.clientHeight ||
+            typeof wv.loadURL !== 'function' || typeof wv.getURL !== 'function')) return { success: false, error: 'PREVIEW_UNAVAILABLE' };
 
         if (wv && (wv.clientWidth === 0 || wv.clientHeight === 0)) {
             logBridge('面板处于后台或可见区域为零，已挂起并启动 300ms 自动重试...');
@@ -129,10 +217,36 @@ export function useGameView(
                     refreshGame();
                 }
             }, 300);
-            return;
+            return false;
         }
 
         pendingRefresh = false;
+        let request: ReturnType<typeof observeRefresh> | null = null;
+        if (verified) {
+            try { request = observeRefresh(wv, generation, globalState.runMode); }
+            catch (_) { return { success: false, error: 'PREVIEW_UNAVAILABLE' }; }
+        }
+        const unavailable = () => { if (request) { request.cancel(); return request.completion; } return false; };
+        if (globalState.runMode === 'preview') {
+            try {
+                // ponytail: query Creator's bound port; probing neighbors can select another project.
+                const portQuery = new Promise<number>((resolve, reject) => {
+                    Editor.Ipc.sendToMain('mcp-inspector-bridge:query-preview-port', (error: any, value: number) => {
+                        if (error || !Number.isInteger(value) || value < 1 || value > 65535) {
+                            reject(new Error('Current Creator Preview server is unavailable'));
+                        } else resolve(value);
+                    }, 5000);
+                });
+                const port = await (request ? Promise.race([portQuery, request.completion.then(() => null)]) : portQuery);
+                if (generation !== refreshGeneration || globalState.runMode !== 'preview' ||
+                    !globalState.isEditorSceneActive || gameView.value !== wv || wv?.isConnected === false ||
+                    (request && !request.current())) return unavailable();
+                globalState.previewPort = port;
+            } catch (_) {
+                warnBridge('当前项目的预览服务器不可用，未加载默认或其他端口。');
+                return unavailable();
+            }
+        }
         globalState.isGamePaused = false;
         globalState.nodeTree = null;
         globalState.lastTreeUpdate = 0;
@@ -146,6 +260,10 @@ export function useGameView(
         }
 
         logBridge(`更新 webviewSrc 为: ${targetUrl}`);
+        if (request) {
+            request.navigate(targetUrl);
+            return request.completion;
+        }
         globalState.webviewSrc = targetUrl;
         if (wv) {
             try {
@@ -164,6 +282,7 @@ export function useGameView(
                 try { wv.src = targetUrl; } catch (err) {}
             }
         }
+        return true;
     }
 
     let modeSwitchTimer: any = null;
@@ -172,6 +291,7 @@ export function useGameView(
      * @param newMode 目标运行模式 ('preview' | 'build' | 'custom')
      */
     const switchRunMode = (newMode: 'preview' | 'build' | 'custom') => {
+        if (cancelRefresh) cancelRefresh();
         logBridge(`switchRunMode 触发 | 目标模式: ${newMode}`);
         globalState.isSwitchingMode = true;
         globalState.runMode = newMode;
@@ -461,32 +581,15 @@ export function useGameView(
         isEnvInitialized = true;
 
         try {
-            const probeAlivePort = async (startPort: number): Promise<number> => {
-                for (let p = startPort; p <= startPort + 10; p++) {
-                    try {
-                        const controller = new AbortController();
-                        const timeoutId = setTimeout(() => controller.abort(), 800);
-                        await fetch(`http://localhost:${p}/settings.js`, { mode: 'no-cors', signal: controller.signal });
-                        clearTimeout(timeoutId);
-                        console.log(`[Bridge] 成功嗅探到当前真正活跃的预览服务器端口: ${p}`);
-                        return p;
-                    } catch (e) { }
-                }
-                console.warn(`[Bridge] 端口自增探针测底失败，被迫退回起始分配端口: ${startPort}`);
-                return startPort;
-            };
-
             if (typeof Editor !== 'undefined' && Editor.Ipc) {
-                Editor.Ipc.sendToMain('mcp-inspector-bridge:query-preview-port', async (err: any, res: number) => {
-                    if (!err && res) {
-                        const alivePort = await probeAlivePort(res);
-                        globalState.previewPort = alivePort;
-                        if (globalState.webviewSrc === 'http://localhost:7456' && alivePort !== 7456) {
-                            globalState.webviewSrc = `http://localhost:${alivePort}`;
-                        }
-                    }
+                if (globalState.runMode === 'preview') {
                     refreshGame();
-                });
+                } else {
+                    Editor.Ipc.sendToMain('mcp-inspector-bridge:query-preview-port', (err: any, port: number) => {
+                        if (!err && Number.isInteger(port) && port >= 1 && port <= 65535) globalState.previewPort = port;
+                        refreshGame();
+                    });
+                }
                 Editor.Ipc.sendToMain('mcp-inspector-bridge:query-resolution', (err: any, res: string) => {
                     if (!err && res) selectedResolution.value = res;
                 });

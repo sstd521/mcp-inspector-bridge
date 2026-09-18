@@ -257,27 +257,15 @@ module.exports = {
             profile.save();
         },
         'query-preview-port'(event: any) {
-            let port = 7456;
-
+            let port: unknown;
             try {
-                if (typeof Editor !== 'undefined' && Editor.PreviewServer) {
-                    if ((Editor.PreviewServer as any)._previewPort) {
-                        port = (Editor.PreviewServer as any)._previewPort;
-                    }
-                }
+                port = Editor.PreviewServer && Editor.PreviewServer.previewPort;
             } catch(e) {}
-            
-            // 策略 2: profile 取值备用
-            if (port === 7456) {
-                try {
-                    const profile = Editor.Profile.load('profile://global/settings.json');
-                    if (profile && profile.data && profile.data['preview-port']) {
-                        port = profile.data['preview-port'];
-                    }
-                } catch (e) {}
-            }
-
             if (event.reply) {
+                if (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535) {
+                    event.reply(new Error('Current Creator Preview server is unavailable'));
+                    return;
+                }
                 event.reply(null, port);
             }
         },

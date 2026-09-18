@@ -10,6 +10,8 @@ interface CustomResolution {
 
 export function useLayout(globalState: any, wrapMount: any, wrapperSize: any) {
     const selectedResolution = ref('FIT');
+    // Temporary MCP lease: never flows through the persisted resolution/rotation refs.
+    const runtimeViewport = ref(null as any);
     const isLandscape = ref(false);
     
     // --- 自定义分辨率 ---
@@ -227,7 +229,8 @@ export function useLayout(globalState: any, wrapMount: any, wrapperSize: any) {
     });
 
     const gameContainerStyle = computed(() => {
-        if (selectedResolution.value === 'FIT') {
+        const temporary = runtimeViewport.value;
+        if (!temporary && selectedResolution.value === 'FIT') {
             return { width: '100%', height: '100%', position: 'relative', overflow: 'hidden' };
         }
 
@@ -248,7 +251,7 @@ export function useLayout(globalState: any, wrapMount: any, wrapperSize: any) {
             return { width: '100%', height: '100%', position: 'relative', overflow: 'hidden' };
         }
 
-        const parts = selectedResolution.value.split('x');
+        const parts = temporary ? [temporary.width, temporary.height] : selectedResolution.value.split('x');
         let targetW = parseInt(parts[0]);
         let targetH = parseInt(parts[1]);
 
@@ -256,7 +259,7 @@ export function useLayout(globalState: any, wrapMount: any, wrapperSize: any) {
             return { width: '100%', height: '100%', position: 'relative', overflow: 'hidden' };
         }
 
-        if (isLandscape.value) {
+        if (!temporary && isLandscape.value) {
             const tmp = targetW; targetW = targetH; targetH = tmp;
         }
 
@@ -444,6 +447,7 @@ export function useLayout(globalState: any, wrapMount: any, wrapperSize: any) {
 
     return {
         wrapMount,
+        runtimeViewport,
         selectedResolution,
         isLandscape,
         resolutionOptions,

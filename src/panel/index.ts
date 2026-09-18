@@ -1,8 +1,16 @@
 declare const Editor: any;
 import * as fs from 'fs';
 import * as path from 'path';
+import { createInputSession } from './input-session';
 
-const { createApp, ref, reactive, onMounted, watch, computed } = require('vue');
+function inputSession(panel: any) {
+    if (!panel.__mcpInputSession) panel.__mcpInputSession = createInputSession(
+        () => panel.shadowRoot ? panel.shadowRoot.querySelector('#game-view') : null,
+        () => Editor.Project?.path || '');
+    return panel.__mcpInputSession;
+}
+
+const { createApp, ref, reactive, onMounted, watch, computed, nextTick } = require('vue');
 const { NodeTree } = require('./components/NodeTree');
 const { NodeInspector } = require('./components/NodeInspector');
 const { RenderDebugger } = require('./components/RenderDebugger');
@@ -11,7 +19,7 @@ const { useScriptSystem } = require('./composables/useScriptSystem');
 
 // 模块级引用，供 messages handlers 访问
 let _scriptSystem: any = null;
-let _refreshGameFn: (() => void) | null = null;
+let _refreshGameFn: ((awaitCompletion?: boolean) => Promise<any>) | null = null;
 let _gameViewSystem: any = null;
 
 const templateRaw = fs.readFileSync(path.join(__dirname, '../../src/panel/index.html'), 'utf-8');
@@ -40,6 +48,7 @@ module.exports = Editor.Panel.extend({
     },
 
     ready() {
+        const panel = this;
         const panelAppElement = this.$app;
         if (!panelAppElement) return;
 
@@ -67,6 +76,7 @@ module.exports = Editor.Panel.extend({
 
                 // Initialize Composables
                 const layoutSystem = useLayout(globalState, wrapMount, wrapperSize);
+                panel._runtimeViewport = layoutSystem.runtimeViewport;
                 const tabSystem = useTabs();
                 const profilerSystem = useProfiler(globalState, gameView, activeTab);
 
@@ -856,6 +866,66 @@ mcp.log('脚本已加载');
 },
 
     messages: {
+        async 'mcp-runtime-viewport'(this: any, event: any, args: any) {
+            const reply = (ok: boolean) => { if (event.reply) event.reply(null, { ok }); };
+            const viewport = this._runtimeViewport;
+            const view: any = this.shadowRoot ? this.shadowRoot.querySelector('#game-view') : null;
+            const set = args && args.action === 'set_viewport';
+            const keys = set ? ['action', 'owner', 'projectPath', 'webContentsId', 'width', 'height']
+                : ['action', 'owner', 'projectPath', 'webContentsId'];
+            const current = () => this._runtimeViewport === viewport && view && view.isConnected === true &&
+                this.shadowRoot.querySelector('#game-view') === view && view.getWebContentsId() === args.webContentsId &&
+                Editor.Project && Editor.Project.path === args.projectPath;
+            let releaseOnError: (() => void) | null = null;
+            try {
+                // Retire only the captured old lease if its Guest no longer exists.
+                if (this._checkRuntimeViewport) this._checkRuntimeViewport();
+                if (!viewport || !args || Object.keys(args).length !== keys.length || Object.keys(args).some(key => !keys.includes(key)) ||
+                    !['set_viewport', 'reset_viewport'].includes(args.action) ||
+                    typeof args.owner !== 'string' || !/^[a-f0-9]{48}$/.test(args.owner) ||
+                    typeof args.projectPath !== 'string' || !Number.isInteger(args.webContentsId) || args.webContentsId < 1 ||
+                    (set && (![args.width, args.height].every(value => Number.isInteger(value) && value >= 240 && value <= 4096))) ||
+                    !current() || (viewport.value && (viewport.value.owner !== args.owner || viewport.value.webContentsId !== args.webContentsId))) {
+                    reply(false); return;
+                }
+                if (!set) {
+                    if (this._releaseRuntimeViewport) this._releaseRuntimeViewport();
+                    await nextTick();
+                    reply(Boolean(current() && !viewport.value)); return;
+                }
+                if (this._releaseRuntimeViewport) this._releaseRuntimeViewport();
+                viewport.value = { owner: args.owner, webContentsId: args.webContentsId, width: args.width, height: args.height };
+                const lease = viewport.value;
+                let observer: MutationObserver | null = null;
+                const release = () => {
+                    if (viewport.value === lease) viewport.value = null;
+                    view.removeEventListener('did-start-loading', release);
+                    view.removeEventListener('did-start-navigation', onNavigation);
+                    view.removeEventListener('destroyed', release);
+                    if (observer) observer.disconnect();
+                    if (this._releaseRuntimeViewport === release) this._releaseRuntimeViewport = null;
+                    if (this._checkRuntimeViewport === check) this._checkRuntimeViewport = null;
+                };
+                const check = () => { try { if (!current()) release(); } catch (_) { release(); } };
+                const onNavigation = (event: any) => { if (event.isMainFrame !== false) release(); };
+                this._releaseRuntimeViewport = release;
+                this._checkRuntimeViewport = check;
+                releaseOnError = release;
+                view.addEventListener('did-start-loading', release);
+                view.addEventListener('did-start-navigation', onNavigation);
+                view.addEventListener('destroyed', release);
+                if (typeof MutationObserver === 'function') {
+                    observer = new MutationObserver(check);
+                    observer.observe(this.shadowRoot, { childList: true, subtree: true });
+                }
+                await nextTick();
+                if (!current() || viewport.value !== lease) { release(); reply(false); return; }
+                reply(true);
+            } catch (_) {
+                if (releaseOnError) releaseOnError();
+                reply(false);
+            }
+        },
         'mcp-query-selected-node'(this: any, event: any, reqId: string) {
             const wv: any = this.shadowRoot ? this.shadowRoot.querySelector('#game-view') : null;
             if (!wv) {
@@ -942,21 +1012,19 @@ mcp.log('脚本已加载');
             `;
             wv.executeJavaScript(code).then((r:any) => { if(event.reply) event.reply(null, typeof r === 'string' ? JSON.parse(r) : r); }).catch((e:any) => { if(event.reply) event.reply(null, { error: e.message }); });
         },
-        'mcp-simulate-input'(this: any, event: any, args: any) {
-            const wv: any = this.shadowRoot ? this.shadowRoot.querySelector('#game-view') : null;
-            if(!wv) { if (event.reply) event.reply(null, { error: 'No WebView' }); return; }
-            if (typeof wv.isConnected === 'boolean' && !wv.isConnected) { if (event.reply) event.reply(null, { error: 'WebView detached from DOM' }); return; }
-            try { wv.getWebContentsId(); } catch(e) { if (event.reply) event.reply(null, { error: 'WebView not ready' }); return; }
-            const code = `
-                (function(){
-                    try {
-                        if(!window.__mcpCrawler) return JSON.stringify({ error: 'Crawler not injected' });
-                        if(typeof window.__mcpCrawler.simulateInput !== 'function') return JSON.stringify({ error: 'simulateInput not implemented in probe' });
-                        return JSON.stringify(window.__mcpCrawler.simulateInput(${JSON.stringify(args)}));
-                    } catch(e) { return JSON.stringify({ error: 'EXECUTION_FAILED', msg: e.message }); }
-                })();
-            `;
-            wv.executeJavaScript(code).then((r:any) => { if(event.reply) event.reply(null, typeof r === 'string' ? JSON.parse(r) : r); }).catch((e:any) => { if(event.reply) event.reply(null, { error: e.message }); });
+        async 'mcp-simulate-input'(this: any, event: any, args: any) {
+            const result = await inputSession(this).run(args);
+            if (event.reply) event.reply(null, result);
+        },
+        async 'mcp-cancel-input'(this: any, event: any, args: any) {
+            const result = await inputSession(this).cancel(args);
+            if (event.reply) event.reply(null, result);
+        },
+        async 'mcp-input-context'(this: any, event: any) {
+            let result: any;
+            try { result = await inputSession(this).context(); }
+            catch (_) { result = { error: 'INPUT_CONTEXT_UNAVAILABLE' }; }
+            if (event.reply) event.reply(null, result);
         },
         'mcp-query-memory'(this: any, event: any, args: any) {
              const wv: any = this.shadowRoot ? this.shadowRoot.querySelector('#game-view') : null;
@@ -1042,7 +1110,9 @@ mcp.log('脚本已加载');
                 (function(){
                     try {
                         if(typeof window.__mcpProfilerTick !== 'function') return JSON.stringify({ error: 'Profiler not injected' });
-                        return JSON.stringify(window.__mcpProfilerTick());
+                        var stats = window.__mcpProfilerTick();
+                        try { stats = Object.assign({}, stats, {inputContext: window.__mcpCrawler.getInputContext()}); } catch(_) {}
+                        return JSON.stringify(stats);
                     } catch(e) { return JSON.stringify({ error: 'EXECUTION_FAILED', msg: e.message }); }
                 })();
             `;
@@ -1119,7 +1189,7 @@ mcp.log('脚本已加载');
                 })),
             });
         },
-        'mcp-refresh-preview'(this: any, event: any) {
+        async 'mcp-refresh-preview'(this: any, event: any) {
             if (!_refreshGameFn) {
                 if (event.reply) event.reply(null, { success: false, message: "刷新函数未初始化，面板可能尚未加载完成" });
                 return;
@@ -1129,8 +1199,8 @@ mcp.log('脚本已加载');
                 return;
             }
             try {
-                _refreshGameFn();
-                if (event.reply) event.reply(null, { success: true, message: "预览已刷新" });
+                const result = await _refreshGameFn(true);
+                if (event.reply) event.reply(null, result);
             } catch (e: any) {
                 if (event.reply) event.reply(null, { success: false, message: "刷新失败: " + e.message });
             }
@@ -1151,6 +1221,9 @@ mcp.log('脚本已加载');
     },
 
     close() {
+        if (this.__mcpInputSession) this.__mcpInputSession.close();
+        if (this._releaseRuntimeViewport) this._releaseRuntimeViewport();
+        this._runtimeViewport = null;
         try { window.dispatchEvent(new CustomEvent('panel-close')); } catch(e) {}
         if (this._vueApp) {
             try { this._vueApp.unmount(); } catch(e) {}

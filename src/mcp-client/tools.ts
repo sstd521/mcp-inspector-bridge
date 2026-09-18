@@ -122,19 +122,37 @@ export function setupTools(server: Server, sendRpcToCocos: (method: string, args
                 },
                 {
                     name: "simulate_input",
-                    description: "Simulate a touch input on a button, node, or specific coordinate.",
+                    description: "Dispatch one bounded input (at most 3 seconds); completion verifies release, not game response. For trajectory use inputContext.id from get_runtime_stats, Cocos bottom-left coordinates, increasing atMs and a final empty frame. Never automatically replay a partial input.",
                     inputSchema: { 
                         type: "object", 
                         properties: { 
-                            inputType: { type: "string", description: "Interaction type: 'click', 'swipe', 'long_press'", enum: ['click', 'swipe', 'long_press'] },
+                            inputType: { type: "string", enum: ['click', 'swipe', 'long_press', 'trajectory'] },
                             uuid: { type: "string", description: "Optional. UUID of target node." },
                             x: { type: "number", description: "Optional. Screen X coordinate to touch. If uuid is skipped, uses this." },
                             y: { type: "number", description: "Optional. Screen Y coordinate to touch." },
-                            duration: { type: "number", description: "Duration in ms for long_press or swipe. Default 100." },
+                            duration: { type: "number", exclusiveMinimum: 0, maximum: 3000, description: "Duration in ms for long_press or swipe. Default 100." },
                             swipeDeltaX: { type: "number", description: "X offset for swipe." },
-                            swipeDeltaY: { type: "number", description: "Y offset for swipe." }
+                            swipeDeltaY: { type: "number", description: "Y offset for swipe." },
+                            pointerType: { type: 'string', enum: ['mouse', 'touch'] },
+                            coordinateSpace: { type: 'string', enum: ['cocos-bottom-left'] },
+                            expectedContext: { type: 'string', pattern: '^[a-f0-9]{32}$' },
+                            frames: { type: 'array', minItems: 2, maxItems: 120, items: {
+                                type: 'object', additionalProperties: false, required: ['atMs', 'points'], properties: {
+                                    atMs: { type: 'integer', minimum: 0, maximum: 3000 },
+                                    points: { type: 'array', maxItems: 5, items: { type: 'object', additionalProperties: false,
+                                        required: ['id', 'x', 'y'], properties: {
+                                            id: { type: 'integer', minimum: 0, maximum: 4 }, x: { type: 'number' }, y: { type: 'number' },
+                                        } } },
+                                },
+                            } },
                         }, 
-                        required: [] 
+                        required: [], additionalProperties: false,
+                        oneOf: [
+                            { properties: { inputType: { enum: ['click', 'swipe', 'long_press'] } },
+                                not: { anyOf: ['pointerType', 'coordinateSpace', 'expectedContext', 'frames'].map(key => ({ required: [key] })) } },
+                            { properties: { inputType: { const: 'trajectory' } }, required: ['inputType', 'pointerType', 'coordinateSpace', 'expectedContext', 'frames'],
+                                not: { anyOf: ['uuid', 'x', 'y', 'duration', 'swipeDeltaX', 'swipeDeltaY'].map(key => ({ required: [key] })) } },
+                        ],
                     },
                 },
                 {
@@ -162,7 +180,7 @@ export function setupTools(server: Server, sendRpcToCocos: (method: string, args
                 },
                 {
                     name: "get_runtime_stats",
-                    description: "Get current game runtime performance stats including FPS, DrawCall and CPU logic/render times.",
+                    description: "Get current runtime performance stats and, when available, inputContext for bounded trajectory coordinates and scene/viewport identity.",
                     inputSchema: { type: "object", properties: {}, required: [] },
                 },
                 {

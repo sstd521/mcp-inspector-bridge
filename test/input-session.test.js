@@ -1,0 +1,45 @@
+'use strict';
+const assert = require('assert');
+const vm = require('vm');
+const { EventEmitter } = require('events');
+const { fixture } = require('./input-completion.test');
+const { createInputSession } = require('../dist/panel/input-session');
+async function run() {
+  const f = fixture(), wv = new EventEmitter();
+  wv.getWebContentsId = () => 9;
+  wv.addEventListener = wv.on.bind(wv); wv.removeEventListener = wv.removeListener.bind(wv);
+  wv.executeJavaScript = code => Promise.resolve(vm.runInNewContext(code, f.globals));
+  const session = createInputSession(() => wv, () => '/project');
+  const ownership = { owner: 'a'.repeat(48), requestId: 'b'.repeat(48) };
+  const request = { input: { inputType: 'long_press', x: 1, y: 2, duration: 3000 }, ownership, projectPath: '/project' };
+  assert.match((await session.context()).id, /^[a-f0-9]{32}$/);
+  const pending = session.run(request); await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(f.events.length, 1);
+  const wrong = await session.cancel({ ...ownership, owner: 'c'.repeat(48), projectPath: '/project' });
+  assert.strictEqual(wrong.matched, false); assert.strictEqual(f.events.length, 1);
+  const result = await session.cancel({ ...ownership, projectPath: '/project' });
+  assert.strictEqual(result.released, true); assert.strictEqual((await pending).status, 'partial'); f.clean();
+  assert.strictEqual((await session.run(request)).success, false); assert.strictEqual(f.events.length, 2);
+  const early = { ...ownership, requestId: 'd'.repeat(48) };
+  await session.cancel({ ...early, projectPath: '/project' });
+  assert.strictEqual((await session.run({ ...request, ownership: early })).success, false);
+  assert.strictEqual((await session.run({ ...request, projectPath: '/other' })).success, false);
+  const own = { ...ownership, requestId: 'e'.repeat(48) };
+  const nav = session.run({ ...request, ownership: own }); await new Promise(resolve => setImmediate(resolve));
+  wv.emit('did-start-navigation', { isMainFrame: true });
+  assert.strictEqual((await nav).status, 'partial'); f.clean();
+  assert.strictEqual(wv.eventNames().length, 0);
+  session.close();
+  assert.strictEqual((await session.run({ ...request, ownership: { ...own, requestId: 'f'.repeat(48) } })).success, false);
+  const delayed = fixture(), delayedView = { getWebContentsId: () => 10 };
+  let runCode, resolveExecution;
+  delayedView.executeJavaScript = code => code.startsWith('JSON.stringify') ? Promise.resolve(vm.runInNewContext(code, delayed.globals))
+    : new Promise(resolve => { runCode = code; resolveExecution = resolve; });
+  const delayedSession = createInputSession(() => delayedView, () => '/project');
+  const late = delayedSession.run(request); await new Promise(resolve => setImmediate(resolve));
+  delayed.globals.Date.now = () => Date.now() + 1000;
+  resolveExecution(await vm.runInNewContext(runCode, delayed.globals));
+  assert.strictEqual((await late).error, 'INPUT_EXPIRED'); assert.strictEqual(delayed.events.length, 0); delayed.clean();
+  console.log('input-session.test.js: ok');
+}
+run().catch(error => { console.error(error); process.exitCode = 1; });

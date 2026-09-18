@@ -1,4 +1,5 @@
 import * as WebSocket from 'ws';
+import { randomBytes } from 'crypto';
 declare const Editor: any;
 
 const TOOL_IPC_MAP: Record<string, string> = {
@@ -138,6 +139,8 @@ function handleCaptureScreenshot(ws: WebSocket.WebSocket, reqId: string) {
 export function startMcpRouter(onStatusChange: (status: any) => void): { close: () => void } {
     let _wss: WebSocket.Server | null = null;
     let _port = 4456;
+    const inputConnections = new Set<() => void>();
+    let disposed = false;
 
     const tryListen = () => {
         try {
@@ -157,7 +160,22 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
             });
 
             _wss.on('connection', (ws) => {
+                if (disposed) { ws.close(); return; }
+                let closed = false;
+                const owner = randomBytes(24).toString('hex');
+                const inputs = new Map<string, any>();
+                const cancelInput = (request: any) => {
+                    if (request.canceled) return Promise.resolve();
+                    request.canceled = true;
+                    return dispatchToPanelWithTimeout('mcp-cancel-input', {
+                    ...request.ownership, projectPath: request.projectPath,
+                    }, 500).catch(() => undefined);
+                };
+                const cancelOwned = () => { for (const request of inputs.values()) void cancelInput(request); inputs.clear(); };
+                inputConnections.add(cancelOwned);
+                ws.on('close', () => { closed = true; cancelOwned(); inputConnections.delete(cancelOwned); });
                 ws.on('message', async (message) => {
+                    if (disposed || closed) return;
                     try {
                         const data = JSON.parse(message.toString());
                         if (data.type === 'ping') {
@@ -191,8 +209,13 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
                     
                     if (data.method === 'tools/call' && data.params) {
                         const name = data.params.name;
+                        const controlledWrite = name === 'simulate_input' || name === 'refresh_preview';
                         const args = data.params.args || {};
                         const reqId = data.id || Date.now().toString();
+                        const inputRequest = name === 'simulate_input' ? {
+                            input: args, ownership: { owner, requestId: randomBytes(24).toString('hex') },
+                            projectPath: Editor.Project?.path || '',
+                        } : null;
 
                         try {
                             Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'mcp-inspector-bridge:mcp-log', {
@@ -276,17 +299,29 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
                         }
 
                         try {
+                            if (inputRequest) inputs.set(inputRequest.ownership.requestId, inputRequest);
                             const res = uuidLookupTool
                                 ? await dispatchToUuidLookupWithTimeout(uuidLookupTool.channel, args, uuidLookupTool.timeout)
-                                : await dispatchToPanelWithTimeout(ipcChannel, args, 3000);
+                                : await dispatchToPanelWithTimeout(ipcChannel, inputRequest || args,
+                                    name === 'simulate_input' ? 4000 : name === 'refresh_preview' ? 10000 : 3000);
                             let contentText = '';
-                            if (!res || res.error) {
+                            const controlledFailure = controlledWrite && (!res || res.success === false || res.error);
+                            if (controlledFailure) {
+                                contentText = JSON.stringify({ success: false,
+                                    error: typeof res?.error === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/.test(res.error)
+                                        ? res.error : 'RUNTIME_OPERATION_FAILED',
+                                    ...(res?.status === 'partial' ? { status: 'partial', verified: false, retryable: false,
+                                        ...(name === 'simulate_input' && Number.isInteger(res.framesDispatched) && Number.isInteger(res.totalFrames) &&
+                                            res.framesDispatched >= 0 && res.framesDispatched <= res.totalFrames && res.totalFrames >= 2 && res.totalFrames <= 120
+                                            ? { framesDispatched: res.framesDispatched, totalFrames: res.totalFrames } : {}) } : {}) });
+                            } else if (!res || res.error) {
                                 contentText = JSON.stringify({ error: (res && res.error) || 'Unknown IPC error' });
                             } else {
                                 contentText = JSON.stringify(res.result || res, null, 2);
                             }
                             
-                            const resultPayload = { content: [{ type: "text", text: contentText }] };
+                            const resultPayload = { content: [{ type: "text", text: contentText }],
+                                ...(controlledFailure ? { isError: true } : {}) };
                             
                             if (name === 'get_node_tree') {
                                 CACHE[cacheKey] = { timestamp: Date.now(), data: resultPayload };
@@ -297,13 +332,14 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
                                 if (resText.length > 500) resText = resText.substring(0, 500) + '...[truncated:超长响应已截断]';
                                 Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'mcp-inspector-bridge:mcp-log', {
                                     time: new Date().toLocaleTimeString(),
-                                    type: (!res || res.error) ? 'err' : 'res',
+                                    type: (controlledFailure || !res || res.error) ? 'err' : 'res',
                                     content: `[${name}]\nResult: ${resText}`
                                 });
                             } catch (e) {}
 
                             ws.send(JSON.stringify({ jsonrpc: "2.0", id: reqId, result: resultPayload }));
                         } catch (err: any) {
+                            if (inputRequest) await cancelInput(inputRequest);
                             try {
                                 Editor.Ipc.sendToPanel('mcp-inspector-bridge', 'mcp-inspector-bridge:mcp-log', {
                                     time: new Date().toLocaleTimeString(),
@@ -314,9 +350,12 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
                             ws.send(JSON.stringify({
                                 jsonrpc: "2.0",
                                 id: reqId,
-                                result: { content: [{ type: "text", text: `Execution failed: ${err.message}` }] }
+                                result: controlledWrite
+                                    ? { isError: true, content: [{ type: 'text', text: JSON.stringify({ success: false,
+                                        error: 'RUNTIME_OPERATION_FAILED', status: 'partial', verified: false, retryable: false }) }] }
+                                    : { content: [{ type: "text", text: `Execution failed: ${err.message}` }] }
                             }));
-                        }
+                        } finally { if (inputRequest) inputs.delete(inputRequest.ownership.requestId); }
                     }
                 } catch(e) {}
             });
@@ -330,6 +369,9 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
 
     return { 
         close: () => {
+            disposed = true;
+            for (const cancel of inputConnections) cancel();
+            inputConnections.clear();
             if (_wss) {
                 try { _wss.close(); } catch(e) {}
                 _wss = null;

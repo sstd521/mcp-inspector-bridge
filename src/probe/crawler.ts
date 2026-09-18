@@ -75,7 +75,203 @@ function getComponentClassName(comp) {
 }
 
 export function initCrawler() {
+    let inputContext = null;
+    let activeInput = null;
+    const finishedInputs = new Map();
+    const randomId = (words = 4) => Array.from(window.crypto.getRandomValues(new Uint32Array(words)))
+        .map(value => value.toString(16).padStart(8, '0')).join('');
+    const inputKey = ownership => {
+        if (ownership === undefined) return randomId(6) + ':' + randomId(6);
+        if (!ownership || Object.keys(ownership).length !== 2 || typeof ownership.owner !== 'string' || typeof ownership.requestId !== 'string' ||
+            !/^[a-f0-9]{48}$/.test(ownership.owner) || !/^[a-f0-9]{48}$/.test(ownership.requestId)) throw new Error('INVALID_INPUT_OWNER');
+        return ownership.owner + ':' + ownership.requestId;
+    };
+    const rememberInput = key => {
+        for (const [id, expiry] of finishedInputs) if (expiry <= Date.now()) finishedInputs.delete(id);
+        finishedInputs.set(key, Date.now() + 6000);
+        while (finishedInputs.size > 64) finishedInputs.delete(finishedInputs.keys().next().value);
+    };
+    function getInputContext() {
+        const eng = window.cc, scene = eng?.director?.getScene();
+        const canvas = document.getElementById('GameCanvas') || document.querySelector('canvas');
+        if (!scene || scene.isValid === false || !canvas || !eng.view || !(scene.uuid || scene.id)) throw new Error('INPUT_CONTEXT_UNAVAILABLE');
+        if (eng.view._isRotated) throw new Error('UNSUPPORTED_VIEW_ROTATION');
+        const rect = canvas.getBoundingClientRect(), visibleSize = eng.view.getVisibleSize(), visibleOrigin = eng.view.getVisibleOrigin();
+        const data = { sceneUuid: scene.uuid || scene.id, coordinateSpace: 'cocos-bottom-left',
+            visibleOrigin: { x: visibleOrigin.x, y: visibleOrigin.y }, visibleSize: { width: visibleSize.width, height: visibleSize.height },
+            canvasRect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height }, dpr: window.devicePixelRatio };
+        if (![rect.left, rect.top, visibleOrigin.x, visibleOrigin.y].every(Number.isFinite) ||
+            ![rect.width, rect.height, visibleSize.width, visibleSize.height, data.dpr].every(value => Number.isFinite(value) && value > 0)) throw new Error('INVALID_VIEWPORT');
+        const signature = JSON.stringify([data, canvas.width, canvas.height, eng.view.getFrameSize(),
+            eng.view._scaleX, eng.view._scaleY, eng.view._viewportRect, eng.view._devicePixelRatio, eng.view._isRotated]);
+        if (!inputContext || inputContext.scene !== scene || inputContext.canvas !== canvas || inputContext.eng !== eng || inputContext.signature !== signature) {
+            inputContext = { id: randomId(), scene, canvas, eng, signature, data };
+        }
+        return { id: inputContext.id, ...data };
+    }
+    function inputBusy(key) {
+        const manager = window.cc?.internal?.inputManager;
+        for (const [id, expiry] of finishedInputs) if (expiry <= Date.now()) finishedInputs.delete(id);
+        return activeInput || finishedInputs.size >= 64 || (finishedInputs.get(key) || 0) > Date.now() || manager?._mousePressed ||
+            (typeof manager?.getGlobalTouchCount === 'function' && manager.getGlobalTouchCount() > 0);
+    }
+    function inputCoordinates(context) {
+        const view = inputContext.eng.view, vp = view._viewportRect, ratio = view._devicePixelRatio;
+        if (vp && [view._scaleX, view._scaleY, ratio].every(value => Number.isFinite(value) && value > 0) &&
+            [vp.x, vp.y].every(Number.isFinite)) {
+            // Inverse of Creator 2.4 CCView._convertTouchesWithScale and convertToLocationInView.
+            return { x: context.canvasRect.left + vp.x / ratio, y: context.canvasRect.top + context.canvasRect.height - vp.y / ratio,
+                scaleX: view._scaleX / ratio, scaleY: view._scaleY / ratio };
+        }
+        return { x: context.canvasRect.left - context.visibleOrigin.x * context.canvasRect.width / context.visibleSize.width,
+            y: context.canvasRect.top + context.canvasRect.height + context.visibleOrigin.y * context.canvasRect.height / context.visibleSize.height,
+            scaleX: context.canvasRect.width / context.visibleSize.width, scaleY: context.canvasRect.height / context.visibleSize.height };
+    }
+    function runTrajectory(args, ownership) {
+        let attempted = false, framesDispatched = 0;
+        const failure = error => ({ success: false, error, ...(attempted ? { status: 'partial', verified: false, retryable: false,
+            framesDispatched, totalFrames: args.frames.length } : {}) });
+        try {
+            const allowed = ['inputType', 'pointerType', 'coordinateSpace', 'expectedContext', 'frames'];
+            if (Object.keys(args).some(key => !allowed.includes(key)) || !['mouse', 'touch'].includes(args.pointerType) ||
+                args.coordinateSpace !== 'cocos-bottom-left' || !/^[a-f0-9]{32}$/.test(args.expectedContext) ||
+                !Array.isArray(args.frames) || args.frames.length < 2 || args.frames.length > 120 || JSON.stringify(args).length > 65536) return failure('INVALID_ARGS');
+            const context = getInputContext(), snapshot = inputContext;
+            if (context.id !== args.expectedContext) return failure('STALE_INPUT_CONTEXT');
+            const key = inputKey(ownership);
+            if (inputBusy(key)) return failure('INPUT_BUSY');
+            const capabilities = snapshot.eng.sys?.capabilities || {};
+            const touch = args.pointerType === 'touch';
+            const nativeTouch = 'touches' in capabilities && typeof Touch !== 'undefined' && typeof TouchEvent !== 'undefined';
+            const manager = touch && !nativeTouch ? snapshot.eng.internal?.inputManager : null;
+            const view = snapshot.eng.view;
+            const touchMethods = { touchstart: 'handleTouchesBegin', touchmove: 'handleTouchesMove',
+                touchend: 'handleTouchesEnd', touchcancel: 'handleTouchesCancel' };
+            if (touch ? !nativeTouch && (!manager || !manager._isRegisterEvent || manager._glView !== view || snapshot.eng.game?.canvas !== snapshot.canvas ||
+                typeof snapshot.eng.Touch !== 'function' ||
+                ['getTouchesByEvent', 'getGlobalTouchCount', ...Object.values(touchMethods)].some(name => typeof manager[name] !== 'function') ||
+                ['convertToLocationInView', '_convertTouchesWithScale'].some(name => typeof view[name] !== 'function') ||
+                ![view._scaleX, view._scaleY, view._devicePixelRatio].every(value => Number.isFinite(value) && value > 0) ||
+                ![view._viewportRect?.x, view._viewportRect?.y].every(Number.isFinite))
+                : !('mouse' in capabilities) || snapshot.eng.sys?.isMobile || typeof MouseEvent === 'undefined') return failure('INPUT_UNAVAILABLE');
+            let previous = new Set(), ended = new Set(), pointCount = 0, previousTime = -1;
+            const frames = [];
+            for (const frame of args.frames) {
+                if (!frame || Object.keys(frame).some(key => !['atMs', 'points'].includes(key)) || !Number.isInteger(frame.atMs) ||
+                    frame.atMs <= previousTime || frame.atMs > 3000 || !Array.isArray(frame.points) || frame.points.length > (touch ? 5 : 1)) return failure('INVALID_ARGS');
+                const ids = new Set(), points = [];
+                for (const point of frame.points) {
+                    if (!point || Object.keys(point).length !== 3 || Object.keys(point).some(key => !['id', 'x', 'y'].includes(key)) ||
+                        !Number.isInteger(point.id) || point.id < 0 || point.id > (touch ? 4 : 0) || ids.has(point.id) || ended.has(point.id) ||
+                        ![point.x, point.y].every(Number.isFinite) || point.x < context.visibleOrigin.x || point.y < context.visibleOrigin.y ||
+                        point.x > context.visibleOrigin.x + context.visibleSize.width || point.y > context.visibleOrigin.y + context.visibleSize.height) return failure('INVALID_ARGS');
+                    ids.add(point.id); points.push({ id: point.id, x: point.x, y: point.y });
+                }
+                for (const id of previous) if (!ids.has(id)) ended.add(id);
+                pointCount += points.length; previous = ids; previousTime = frame.atMs; frames.push({ atMs: frame.atMs, points });
+            }
+            if (frames[0].atMs !== 0 || !frames[0].points.length || frames[frames.length - 1].points.length || pointCount > 600) return failure('INVALID_ARGS');
+            return new Promise(resolve => {
+                const active = new Map(), touchIds = new Map(), nativeTouches = new Map(), touchBase = 100000 + parseInt(randomId().slice(-6), 16) * 8;
+                const lease = { key, cancel: null, released: false }; activeInput = lease;
+                let finished = false, timer = null, deadline = null;
+                const start = Date.now(), canvas = snapshot.canvas, mapping = inputCoordinates(context);
+                const domPoint = point => ({ id: point.id,
+                    x: mapping.x + point.x * mapping.scaleX, y: mapping.y - point.y * mapping.scaleY });
+                const dispatch = (type, changed) => {
+                    if (!changed.length) return;
+                    attempted = true;
+                    if (manager) {
+                        // Desktop Creator does not register DOM touch listeners. Reuse its touch pool,
+                        // coordinate conversion and event dispatch without changing sys capabilities.
+                        let touches;
+                        if (type === 'touchcancel') {
+                            // The view may already be gone. Native cancel retires these owned IDs
+                            // before converting coordinates; a failed event still reports partial.
+                            touches = changed.map(point => nativeTouches.get(touchIds.get(point.id))).filter(Boolean);
+                            touches.forEach(touch => touch._setPrevPoint(touch._point));
+                        } else {
+                            const changedTouches = changed.map(point => ({ identifier: touchIds.get(point.id),
+                                clientX: point.x, clientY: point.y, pageX: point.x, pageY: point.y }));
+                            touches = manager.getTouchesByEvent({ changedTouches }, context.canvasRect);
+                            touches.forEach(touch => nativeTouches.set(touch.getID(), touch));
+                        }
+                        manager[touchMethods[type]](touches);
+                    } else if (touch) {
+                        const makeTouch = point => new Touch({ identifier: touchIds.get(point.id), target: canvas, clientX: point.x, clientY: point.y });
+                        const remaining = [...active.values()].map(makeTouch);
+                        canvas.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true,
+                            touches: remaining, targetTouches: remaining, changedTouches: changed.map(makeTouch) }));
+                    } else {
+                        canvas.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0,
+                            buttons: type === 'mouseup' ? 0 : 1, clientX: changed[0].x, clientY: changed[0].y }));
+                    }
+                };
+                const finish = error => {
+                    if (finished) return;
+                    finished = true;
+                    for (const cleanup of [() => clearTimeout(timer), () => clearTimeout(deadline),
+                        () => window.removeEventListener('pagehide', cancel), () => window.removeEventListener('beforeunload', cancel)]) { try { cleanup(); } catch (_) {} }
+                    const remaining = [...active.values()]; active.clear();
+                    try { dispatch(touch ? (error ? 'touchcancel' : 'touchend') : 'mouseup', remaining); lease.released = true; }
+                    catch (_) { error = error || 'INPUT_DISPATCH_FAILED'; }
+                    if (activeInput === lease) activeInput = null;
+                    rememberInput(key);
+                    resolve(error ? failure(error) : { success: true, status: 'completed', completionVerified: true,
+                        completionEvidence: 'input-release-dispatched', framesDispatched, totalFrames: frames.length });
+                };
+                const cancel = () => finish('INPUT_CANCELED'); lease.cancel = cancel;
+                const step = () => {
+                    if (finished) return;
+                    try {
+                        if (Date.now() - start > 3000 || getInputContext().id !== context.id ||
+                            (manager && (snapshot.eng.internal?.inputManager !== manager || manager._glView !== view ||
+                                snapshot.eng.game?.canvas !== canvas || !manager._isRegisterEvent))) {
+                            finish('STALE_INPUT_CONTEXT'); return;
+                        }
+                        const frame = frames[framesDispatched], next = new Map(frame.points.map(point => [point.id, domPoint(point)]));
+                        const removed = [...active.values()].filter(point => !next.has(point.id));
+                        for (const point of removed) active.delete(point.id);
+                        try { dispatch(touch ? 'touchend' : 'mouseup', removed); }
+                        catch (error) { for (const point of removed) active.set(point.id, point); throw error; }
+                        if (finished) return;
+                        const added = [...next.values()].filter(point => !active.has(point.id));
+                        const moved = [...next.values()].filter(point => active.has(point.id) &&
+                            (point.x !== active.get(point.id).x || point.y !== active.get(point.id).y));
+                        for (const point of added) {
+                            if (!touchIds.has(point.id)) touchIds.set(point.id, touchBase + point.id);
+                            active.set(point.id, point);
+                        }
+                        dispatch(touch ? 'touchstart' : 'mousedown', added); if (finished) return;
+                        for (const point of moved) active.set(point.id, point);
+                        dispatch(touch ? 'touchmove' : 'mousemove', moved); if (finished) return;
+                        framesDispatched++;
+                        if (framesDispatched === frames.length) { finish(null); return; }
+                        timer = setTimeout(step, Math.max(0, start + frames[framesDispatched].atMs - Date.now()));
+                    } catch (_) { finish('INPUT_DISPATCH_FAILED'); }
+                };
+                try {
+                    window.addEventListener('pagehide', cancel); window.addEventListener('beforeunload', cancel);
+                    deadline = setTimeout(() => {
+                        if (framesDispatched === frames.length - 1 && frames[framesDispatched].atMs === 3000) step();
+                        else finish('INPUT_TIMEOUT');
+                    }, 3000);
+                    step();
+                } catch (_) { finish('INPUT_DISPATCH_FAILED'); }
+            });
+        } catch (_) { return failure('INPUT_CONTEXT_UNAVAILABLE'); }
+    }
     window.__mcpCrawler = {
+        getInputContext,
+        cancelInput: function (owner, requestId) {
+            try {
+                const key = inputKey({ owner, requestId });
+                rememberInput(key);
+                if (!activeInput || activeInput.key !== key) return { ok: true, matched: false, released: false };
+                const lease = activeInput; lease.cancel();
+                return { ok: true, matched: true, released: lease.released };
+            } catch (_) { return { ok: false }; }
+        },
         findNodeByUuid: function (uuid, root) {
             const eng = safeGetCcEngine();
             if (!eng || !eng.director) return null;
@@ -781,122 +977,163 @@ export function initCrawler() {
                 components: compNames
             };
         },
-        simulateInput: function (args) {
-            const eng = window.cc;
-            if (!eng || !eng.director) return { error: 'ENGINE_NOT_READY' };
+        simulateInput: function (args, awaitCompletion = false, ownership) {
+            if (args?.inputType === 'trajectory') return runTrajectory(args, ownership);
+            let dispatchAttempted = false;
+            const failure = (error, msg) => ({ success: false, error, ...(msg ? { msg } : {}),
+                ...(dispatchAttempted ? { status: 'partial', verified: false, retryable: false } : {}) });
+            try {
+                const eng = window.cc;
+                if (!eng || !eng.director) return failure('ENGINE_NOT_READY');
+                const mode = args && args.inputType !== undefined ? args.inputType : 'click';
+                const duration = args && args.duration !== undefined ? args.duration : 100;
+                if (!args || !['click', 'long_press', 'swipe'].includes(mode) ||
+                    Object.keys(args).some(key => !['inputType', 'uuid', 'x', 'y', 'duration', 'swipeDeltaX', 'swipeDeltaY'].includes(key)) ||
+                    !Number.isFinite(duration) || duration <= 0 || duration > 3000 ||
+                    ['x', 'y', 'swipeDeltaX', 'swipeDeltaY'].some(key => args[key] !== undefined && !Number.isFinite(args[key])) ||
+                    (args.uuid !== undefined && (typeof args.uuid !== 'string' || !args.uuid))) return failure('INVALID_ARGS');
 
-            let screenPt = eng.v2(0, 0);
-            let targetSource = '';
+                let screenPt = eng.v2(0, 0);
+                let targetSource = '';
 
-            if (args && args.uuid) {
-                const node = this.findNodeByUuid(args.uuid);
-                if (!node || !node.isValid) return { error: 'NODE_NOT_FOUND', msg: 'Node not found or destroyed.' };
-                let worldPos = eng.v2(0, 0);
-                if (typeof node.convertToWorldSpaceAR === 'function') {
-                    worldPos = node.convertToWorldSpaceAR(eng.v2(0, 0));
-                }
-
-                let camera = null;
-                if (eng.Camera && eng.Camera.cameras) {
-                    camera = eng.Camera.cameras.sort(function(a, b){ return b.depth - a.depth; })[0];
-                }
-                screenPt = (camera && typeof camera.getWorldToScreenPoint === 'function')
-                               ? camera.getWorldToScreenPoint(worldPos) : worldPos;
-                targetSource = 'UUID ' + args.uuid.substring(0,6) + ' (World ' + Math.round(worldPos.x) + ',' + Math.round(worldPos.y) + ')';
-            } else if (args && (args.x !== undefined || args.y !== undefined)) {
-                // If AI provides raw x,y, it is assumed strictly as Cocos Screen Coordinates (bottom-left = 0,0)
-                screenPt.x = args.x || 0;
-                screenPt.y = args.y || 0;
-                targetSource = 'Raw ScreenPos (' + screenPt.x + ', ' + screenPt.y + ')';
-            } else {
-                return { error: 'INVALID_ARGS', msg: 'Please provide either uuid or x/y coordinates' };
-            }
-
-            const canvas = document.getElementById('GameCanvas') || document.querySelector('canvas');
-            if (!canvas) return { error: 'CANVAS_NOT_FOUND' };
-            const rect = canvas.getBoundingClientRect();
-            const frameSize = eng.view.getFrameSize();
-            const visibleOrigin = eng.view.getVisibleOrigin ? eng.view.getVisibleOrigin() : { x: 0, y: 0 };
-            const visibleSize = eng.view.getVisibleSize ? eng.view.getVisibleSize() : { width: frameSize.width, height: frameSize.height };
-
-            const clientX = rect.left + (screenPt.x - visibleOrigin.x) * (rect.width / visibleSize.width);
-            const clientY = rect.bottom - (screenPt.y - visibleOrigin.y) * (rect.height / visibleSize.height);
-
-            function dispatchNativeEvent(type, cx, cy) {
-                let dispatched = false;
-                try {
-                    const evt = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0 });
-                    canvas.dispatchEvent(evt);
-                    dispatched = true;
-                } catch(e) {}
-
-                try {
-                    const touchMap = { 'mousedown': 'touchstart', 'mousemove': 'touchmove', 'mouseup': 'touchend' };
-                    const tType = touchMap[type];
-                    if (tType && typeof Touch !== 'undefined' && typeof TouchEvent !== 'undefined') {
-                        const touch = new Touch({ identifier: 0, target: canvas, clientX: cx, clientY: cy });
-                        const touchEvt = new TouchEvent(tType, {
-                            bubbles: true, cancelable: true,
-                            touches: [touch], targetTouches: [touch], changedTouches: [touch]
-                        });
-                        canvas.dispatchEvent(touchEvt);
+                if (args && args.uuid) {
+                    const node = this.findNodeByUuid(args.uuid);
+                    if (!node || !node.isValid) return failure('NODE_NOT_FOUND', 'Node not found or destroyed.');
+                    let worldPos = eng.v2(0, 0);
+                    if (typeof node.convertToWorldSpaceAR === 'function') {
+                        worldPos = node.convertToWorldSpaceAR(eng.v2(0, 0));
                     }
-                } catch(e) {}
-            }
 
-            const mode = (args && args.inputType) ? args.inputType : 'click';
-            const duration = Math.min((args && args.duration) ? args.duration : 100, 3000);
+                    let camera = null;
+                    if (eng.Camera && eng.Camera.cameras) {
+                        camera = eng.Camera.cameras.slice().sort(function(a, b){ return b.depth - a.depth; })[0];
+                    }
+                    screenPt = (camera && typeof camera.getWorldToScreenPoint === 'function')
+                                   ? camera.getWorldToScreenPoint(worldPos) : worldPos;
+                    targetSource = 'UUID ' + args.uuid.substring(0,6) + ' (World ' + Math.round(worldPos.x) + ',' + Math.round(worldPos.y) + ')';
+                } else if (args && (args.x !== undefined || args.y !== undefined)) {
+                    // If AI provides raw x,y, it is assumed strictly as Cocos Screen Coordinates (bottom-left = 0,0)
+                    screenPt.x = args.x || 0;
+                    screenPt.y = args.y || 0;
+                    targetSource = 'Raw ScreenPos (' + screenPt.x + ', ' + screenPt.y + ')';
+                } else {
+                    return failure('INVALID_ARGS', 'Please provide either uuid or x/y coordinates');
+                }
 
-            try { initVisualFeedbackStyle(); } catch(e) {}
+                const canvas = document.getElementById('GameCanvas') || document.querySelector('canvas');
+                if (!canvas) return failure('CANVAS_NOT_FOUND');
+                const rect = canvas.getBoundingClientRect();
+                const frameSize = eng.view.getFrameSize();
+                const visibleOrigin = eng.view.getVisibleOrigin ? eng.view.getVisibleOrigin() : { x: 0, y: 0 };
+                const visibleSize = eng.view.getVisibleSize ? eng.view.getVisibleSize() : { width: frameSize.width, height: frameSize.height };
+                if (![screenPt.x, screenPt.y, visibleOrigin.x, visibleOrigin.y, rect.left, rect.bottom].every(Number.isFinite) ||
+                    ![rect.width, rect.height, visibleSize.width, visibleSize.height].every(value => Number.isFinite(value) && value > 0)) return failure('INVALID_VIEWPORT');
 
-            dispatchNativeEvent('mousedown', clientX, clientY);
+                const context = getInputContext(), key = inputKey(ownership), mapping = inputCoordinates(context);
+                const clientX = mapping.x + screenPt.x * mapping.scaleX;
+                const clientY = mapping.y - screenPt.y * mapping.scaleY;
+                const endX = clientX + (args.swipeDeltaX || 0) * mapping.scaleX;
+                const endY = clientY - (args.swipeDeltaY || 0) * mapping.scaleY;
+                if (![clientX, clientY, endX, endY].every(Number.isFinite)) return failure('INVALID_ARGS');
+                const capabilities = eng.sys && eng.sys.capabilities;
+                // Creator 2.x desktop mouse handlers already synthesize engine touches.
+                const useTouch = eng.sys && (eng.sys.isMobile || (capabilities && !('mouse' in capabilities) && 'touches' in capabilities));
+                if (useTouch ? !capabilities || !('touches' in capabilities) || typeof Touch === 'undefined' || typeof TouchEvent === 'undefined'
+                    : typeof MouseEvent === 'undefined' || (capabilities && !('mouse' in capabilities))) return failure('INPUT_UNAVAILABLE');
+                if (inputBusy(key)) return failure('INPUT_BUSY');
+                const targetNode = args.uuid ? this.findNodeByUuid(args.uuid) : null;
+                const touchId = 100000 + parseInt(randomId().slice(-6), 16);
 
-            let visualPointer = document.createElement('div');
-            visualPointer.className = 'mcp-visual-base';
-            visualPointer.style.left = clientX + 'px';
-            visualPointer.style.top = clientY + 'px';
-            document.body.appendChild(visualPointer);
-
-            if (mode === 'click') {
-                visualPointer.className += ' mcp-visual-click';
-                setTimeout(function() { dispatchNativeEvent('mouseup', clientX, clientY); }, 50);
-                setTimeout(function() {
-                    if(visualPointer && visualPointer.parentNode) visualPointer.parentNode.removeChild(visualPointer);
-                }, 500);
-            } else if (mode === 'long_press') {
-                visualPointer.className += ' mcp-visual-long-press';
-                visualPointer.style.animationDuration = duration + 'ms';
-                setTimeout(function() {
-                    dispatchNativeEvent('mouseup', clientX, clientY);
-                    if(visualPointer && visualPointer.parentNode) visualPointer.parentNode.removeChild(visualPointer);
-                }, duration);
-            } else if (mode === 'swipe') {
-                visualPointer.className += ' mcp-visual-swipe';
-                const endX = clientX + ((args && args.swipeDeltaX) ? args.swipeDeltaX : 0);
-                const endY = clientY - ((args && args.swipeDeltaY) ? args.swipeDeltaY : 0);
-
-                let startTime = Date.now();
-                function step() {
-                    let progress = (Date.now() - startTime) / duration;
-                    if (progress >= 1) {
-                        visualPointer.style.left = endX + 'px';
-                        visualPointer.style.top = endY + 'px';
-                        dispatchNativeEvent('mousemove', endX, endY);
-                        dispatchNativeEvent('mouseup', endX, endY);
-                        if(visualPointer && visualPointer.parentNode) visualPointer.parentNode.removeChild(visualPointer);
+                function dispatchNativeEvent(type, cx, cy) {
+                    if (useTouch) {
+                        const touchMap = { 'mousedown': 'touchstart', 'mousemove': 'touchmove', 'mouseup': 'touchend', 'cancel': 'touchcancel' };
+                        const touch = new Touch({ identifier: touchId, target: canvas, clientX: cx, clientY: cy });
+                        const active = type === 'mouseup' || type === 'cancel' ? [] : [touch];
+                        canvas.dispatchEvent(new TouchEvent(touchMap[type], {
+                            bubbles: true, cancelable: true, touches: active, targetTouches: active, changedTouches: [touch]
+                        }));
                     } else {
-                        let curX = clientX + (endX - clientX) * progress;
-                        let curY = clientY + (endY - clientY) * progress;
-                        visualPointer.style.left = curX + 'px';
-                        visualPointer.style.top = curY + 'px';
-                        dispatchNativeEvent('mousemove', curX, curY);
-                        requestAnimationFrame(step);
+                        canvas.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true,
+                            clientX: cx, clientY: cy, button: 0, buttons: type === 'mouseup' ? 0 : 1 }));
                     }
                 }
-                requestAnimationFrame(step);
-            }
 
-            return { success: true, msg: 'Simulated ' + mode + ' from ' + targetSource + ' -> Screen DOM (' + Math.round(clientX) + 'px, ' + Math.round(clientY) + 'px)' };
+                const requested = { success: true, msg: 'Requested ' + mode + ' from ' + targetSource };
+                let receipt = null;
+                const completion = new Promise(resolve => {
+                    const lease = { key, cancel: null, released: false }; activeInput = lease;
+                    let finished = false, pressed = false, timer = null, frame = null, visualPointer = null;
+                    let currentX = clientX, currentY = clientY;
+                    const finish = (error) => {
+                        if (finished) return;
+                        finished = true;
+                        for (const cleanup of [() => clearTimeout(timer), () => { if (frame !== null) cancelAnimationFrame(frame); },
+                            () => window.removeEventListener('pagehide', cancel), () => window.removeEventListener('beforeunload', cancel)]) {
+                            try { cleanup(); } catch (_) {}
+                        }
+                        if (pressed) {
+                            pressed = false;
+                            try { dispatchNativeEvent(error && useTouch ? 'cancel' : 'mouseup', currentX, currentY); lease.released = true; }
+                            catch (_) { error = error || 'INPUT_DISPATCH_FAILED'; }
+                        }
+                        try { if (visualPointer && visualPointer.parentNode) visualPointer.parentNode.removeChild(visualPointer); } catch (_) {}
+                        if (activeInput === lease) activeInput = null;
+                        rememberInput(key);
+                        receipt = error ? failure(error) : { success: true, status: 'completed', completionVerified: true,
+                            completionEvidence: 'input-release-dispatched' };
+                        resolve(receipt);
+                    };
+                    const cancel = () => finish('INPUT_CANCELED');
+                    lease.cancel = cancel;
+                    const current = () => getInputContext().id === context.id && (!targetNode ||
+                        (targetNode.isValid && this.findNodeByUuid(args.uuid) === targetNode));
+                    const move = (progress) => {
+                        currentX = clientX + (endX - clientX) * progress;
+                        currentY = clientY + (endY - clientY) * progress;
+                        dispatchNativeEvent('mousemove', currentX, currentY);
+                        if (visualPointer) {
+                            visualPointer.style.left = currentX + 'px';
+                            visualPointer.style.top = currentY + 'px';
+                        }
+                    };
+                    try {
+                        window.addEventListener('pagehide', cancel);
+                        window.addEventListener('beforeunload', cancel);
+                        try {
+                            initVisualFeedbackStyle();
+                            visualPointer = document.createElement('div');
+                            visualPointer.className = 'mcp-visual-base mcp-visual-' + mode.replace('_', '-');
+                            visualPointer.style.left = clientX + 'px';
+                            visualPointer.style.top = clientY + 'px';
+                            visualPointer.style.animationDuration = duration + 'ms';
+                            document.body.appendChild(visualPointer);
+                        } catch (_) { /* Optional visual feedback does not control input delivery. */ }
+                        pressed = true;
+                        dispatchAttempted = true;
+                        dispatchNativeEvent('mousedown', clientX, clientY);
+                        if (finished) return;
+                        const startTime = Date.now();
+                        // ponytail: one final timer bounds release even when background rAF pauses.
+                        timer = setTimeout(() => {
+                            if (finished) return;
+                            try { if (!current()) { finish('STALE_INPUT_CONTEXT'); return; } if (mode === 'swipe') move(1); finish(null); }
+                            catch (_) { finish('INPUT_DISPATCH_FAILED'); }
+                        }, mode === 'click' ? 50 : duration);
+                        if (mode === 'swipe') {
+                            const step = () => {
+                                if (finished) return;
+                                try {
+                                    if (!current()) { finish('STALE_INPUT_CONTEXT'); return; }
+                                    move(Math.min((Date.now() - startTime) / duration, 1));
+                                    if (!finished) frame = requestAnimationFrame(step);
+                                } catch (_) { finish('INPUT_DISPATCH_FAILED'); }
+                            };
+                            frame = requestAnimationFrame(step);
+                        }
+                    } catch (_) { finish('INPUT_DISPATCH_FAILED'); }
+                });
+                return awaitCompletion ? completion : (receipt && !receipt.success ? receipt : requested);
+            } catch (_) { return failure('INPUT_DISPATCH_FAILED'); }
         },
         exportNodeAsPsdData: function(uuid) {
             const rootNode = this.findNodeByUuid(uuid);

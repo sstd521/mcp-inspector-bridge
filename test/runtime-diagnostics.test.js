@@ -190,6 +190,57 @@ async function query(args) {
   const cdpJoined = await logs.getCdpLogs({ tail: 10, level: 'warn', sinceCursor: 0 });
   assert(!JSON.stringify(cdpJoined.items).includes('cdp-password-space-secret'));
   assert(!JSON.stringify(cdpJoined.items).includes('cdp-cookie-space-secret'));
+  debuggerListeners.message({}, 'Runtime.exceptionThrown', {
+    timestamp: 123,
+    exceptionDetails: {
+      text: 'Uncaught', lineNumber: 0, columnNumber: 0,
+      url: 'http://user:runtime-secret@localhost/game.js?token=runtime-token',
+      exception: { className: 'TypeError', description: 'TypeError: broken\n    at render (game.js:1:1)' },
+      stackTrace: { callFrames: [{ functionName: 'render', url: 'game.js', lineNumber: 0, columnNumber: 0 }] },
+    },
+  });
+  const exception = (await logs.getCdpLogs({ tail: 1, level: 'error' })).items[0];
+  assert.strictEqual(exception.name, 'TypeError');
+  assert.strictEqual(exception.line, 0);
+  assert.strictEqual(exception.column, 0);
+  assert(exception.stack.includes('at render'));
+  assert(!JSON.stringify(exception).includes('runtime-secret'));
+  assert(!JSON.stringify(exception).includes('runtime-token'));
+  debuggerListeners.message({}, 'Runtime.consoleAPICalled', {
+    type: 'error', args: [{ subtype: 'error', className: 'RangeError', description: 'RangeError: bad\n at inner (game.js:2:3)' }],
+    stackTrace: { callFrames: [{ functionName: 'outer', url: 'game.js', lineNumber: 0, columnNumber: 0 }] },
+  });
+  const consoleError = (await logs.getCdpLogs({ tail: 1, level: 'error' })).items[0];
+  assert.strictEqual(consoleError.name, 'RangeError');
+  assert(consoleError.stack.includes('inner'));
+  debuggerListeners.message({}, 'Runtime.exceptionThrown', { exceptionDetails: {
+    text: 'Uncaught', exception: { type: 'string', value: 'primitive-runtime-failure' },
+  } });
+  assert((await logs.getCdpLogs({ tail: 1, level: 'error' })).items[0].message.includes('primitive-runtime-failure'));
+  debuggerListeners.message({}, 'Runtime.exceptionThrown', { exceptionDetails: {
+    exception: { description: 'Object' },
+    stackTrace: { callFrames: [{ functionName: 'render', url: 'http://user:secret@tail@localhost/game.js', lineNumber: 0, columnNumber: 0 }] },
+  } });
+  const thrownObject = (await logs.getCdpLogs({ tail: 1, level: 'error' })).items[0];
+  assert(thrownObject.stack.includes('render'));
+  assert(!thrownObject.stack.includes('tail@'));
+  debuggerListeners.message({}, 'Runtime.exceptionThrown', { exceptionDetails: {
+    exception: { description: 'password="private-first;private-second"\nCookie: session=private-cookie; preference=private-cookie-2' },
+  } });
+  assert(!JSON.stringify((await logs.getCdpLogs({ tail: 1, level: 'error' })).items).includes('private-'));
+  const escapedSecret = 'password="first' + String.fromCharCode(92, 34) + ';private-tail"';
+  debuggerListeners.message({}, 'Runtime.exceptionThrown', { exceptionDetails: {
+    exception: { description: escapedSecret + '\n' + JSON.stringify({ password: 'first";private-json-tail' }) },
+  } });
+  assert(!JSON.stringify((await logs.getCdpLogs({ tail: 1, level: 'error' })).items).includes('private-'));
+  for (let i = 0; i < 100; i++) debuggerListeners.message({}, 'Runtime.exceptionThrown', {
+    exceptionDetails: { exception: { className: 'Error', description: 'Error: 密'.repeat(2000) } },
+  });
+  const boundedErrors = await logs.getCdpLogs({ tail: 100, level: 'error' });
+  assert(boundedErrors.items.length > 0);
+  assert(boundedErrors.items.every(entry => entry.stack.length <= 4096));
+  assert(Buffer.byteLength(JSON.stringify(boundedErrors)) <= 100 * 1024);
+  assert.strictEqual(boundedErrors.truncated, true);
   main.unload();
   assert.strictEqual(debuggerDetached, 1);
   assert(removedListeners.some(([name]) => name === 'debugger:message'));
@@ -205,8 +256,13 @@ async function query(args) {
   assert.strictEqual(injectionReply.status.eventCount, injectionReply.logs.nextCursor);
   const injection = executedScripts.find(script => script.includes('window.__mcpLogInjected'));
   assert(injection);
-  const pageWindow = {};
+  const pageListeners = {};
+  const pageWindow = {
+    addEventListener(name, listener) { pageListeners[name] = listener; },
+    removeEventListener(name, listener) { if (pageListeners[name] === listener) delete pageListeners[name]; },
+  };
   const pageConsole = { log() {}, warn() {}, error() {}, info() {}, debug() {} };
+  const originalConsoleError = pageConsole.error;
   function PageError() {
     this.stack = `Error\n    at game (https://preview.example/?refresh_token=injection-refresh-secret#token=injection-hash-secret&${'x'.repeat(400)}:1:1)`;
   }
@@ -217,6 +273,7 @@ async function query(args) {
     setInterval: () => 1,
     clearInterval() {},
     setTimeout() {},
+    clearTimeout() {},
   });
   const injectionCredentialCases = [
     ['Authorization: Bearer injection-message-secret', 'injection-message-secret'],
@@ -237,6 +294,36 @@ async function query(args) {
   assert(!JSON.stringify(injected).includes('injection-refresh-secret'));
   assert(!JSON.stringify(injected).includes('injection-hash-secret'));
   assert(injected.every(entry => entry.m.length <= 300 && (!entry.u || entry.u.length <= 300)));
+  const runtimeError = { name: 'TypeError', message: 'bad input', stack: 'TypeError: bad input\n at draw (http://u:injected-userinfo-secret@localhost/g.js?token=injected-stack-secret:1:1)' };
+  pageConsole.error(runtimeError);
+  assert.strictEqual(injected[injected.length - 1].n, 'TypeError');
+  assert(injected[injected.length - 1].s.includes('at draw'));
+  pageListeners.error({ error: runtimeError, message: 'bad input', filename: 'g.js', lineno: 1, colno: 1 });
+  assert.strictEqual(injected[injected.length - 1].l, 0);
+  assert.strictEqual(injected[injected.length - 1].c, 0);
+  pageListeners.unhandledrejection({ reason: runtimeError });
+  assert.strictEqual(injected[injected.length - 1].t, 'error');
+  assert(!JSON.stringify(injected).includes('injected-stack-secret'));
+  assert(!JSON.stringify(injected).includes('injected-userinfo-secret'));
+  injectionPollEntries = [injected[injected.length - 1]];
+  const polledError = (await logs.getCdpLogs({ tail: 1, level: 'error' })).items[0];
+  assert.strictEqual(polledError.name, 'TypeError');
+  assert(polledError.stack.includes('at draw'));
+  pageConsole.error({ name: 'Error', stack: 'http://user:secret@tail@localhost/game.js\npassword="private-first;private-second"\ncookie session=private-cookie; preference=private-cookie-2' });
+  assert(!JSON.stringify(injected).includes('private-'));
+  assert(!JSON.stringify(injected).includes('tail@'));
+  pageConsole.error({ name: 'Error', stack: escapedSecret + '\n' + JSON.stringify({ password: 'first";private-json-tail' }) });
+  assert(!JSON.stringify(injected).includes('private-'));
+  const savedError = pageConsole.error;
+  pageWindow.__mcpLogCleanup();
+  assert.strictEqual(Object.keys(pageListeners).length, 0);
+  assert.strictEqual(pageConsole.error, originalConsoleError);
+  assert.strictEqual(pageWindow.__mcpLogInjected, false);
+  savedError(runtimeError);
+  assert.strictEqual(pageWindow.__mcpLogBuffer.length, 0, 'retained proxy must stop capturing after cleanup');
+  pageWindow.__mcpLogInjected = true;
+  savedError(runtimeError);
+  assert.strictEqual(pageWindow.__mcpLogBuffer.length, 0, 'a new injection cannot revive a retired proxy');
   logs.detachCdpListener();
 
   game.debugger.sendCommand = async () => ({});

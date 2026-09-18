@@ -22,7 +22,10 @@ export interface CdpLogEntry {
     timestamp: number;
     message: string;
     args: any[];
+    name?: string;
+    stack?: string;
     url?: string;
+    // CDP coordinates: zero-based, including injected/native-event sources.
     line?: number;
     column?: number;
 }
@@ -62,11 +65,13 @@ const CDP_PROTOCOL_VERSION = '1.3';
 /** 将日志条目推入 RingBuffer（自动截断到 MAX_BUFFER 上限） */
 function redact(value: any, limit: number): string {
     return String(value || '')
+        .replace(/\b(password|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|token|x-?api[_-]?key|api[_-]?key)["']?\s*[:=]\s*(["'])(?:\\.|(?!\2)[^\\])*\2/gi, '$1=$2[REDACTED]$2')
         .replace(/\b(authorization|cookie|set-cookie)\s*[:=]\s*[^\r\n,]*/gi, '$1: [REDACTED]')
         .replace(/\bbearer\s+[^\s,;]+/gi, 'Bearer [REDACTED]')
+        .replace(/(https?:\/\/)[^\s/?#]+@/gi, '$1[REDACTED]@')
         .replace(/([?&;,#\s]|^)(access[_-]?token|refresh[_-]?token|token|password|client[_-]?secret|secret|x-?api[_-]?key|api[_-]?key)\s*[=:]\s*[^&#\s,;]+/gi, '$1$2=[REDACTED]')
         .replace(/\b(access[_-]?token|refresh[_-]?token|token|password|client[_-]?secret|secret|x-?api[_-]?key|api[_-]?key)\s+[^\s,;]+/gi, '$1 [REDACTED]')
-        .replace(/\bcookie\s+[\w-]+=[^\s,;]+/gi, 'cookie [REDACTED]')
+        .replace(/\bcookie\s+[^\r\n,]*/gi, 'cookie [REDACTED]')
         .replace(/(["'])(access[_-]?token|refresh[_-]?token|token|password|client[_-]?secret|secret|x-?api[_-]?key|api[_-]?key)\1\s*:\s*(["'])[^"']*\3/gi, '$1$2$1: $3[REDACTED]$3')
         .slice(0, limit);
 }
@@ -79,6 +84,10 @@ function push(e: Omit<CdpLogEntry, 'cursor'>): void {
         cursor: _nextCursor,
         message: redact(e.message, MAX_MSG_LEN),
         url: e.url ? redact(e.url, MAX_URL_LEN) : undefined,
+        name: e.name ? redact(e.name, 128) : undefined,
+        stack: e.stack ? redact(e.stack, 4096) : undefined,
+        line: Number.isSafeInteger(e.line) && e.line! >= 0 ? e.line : undefined,
+        column: Number.isSafeInteger(e.column) && e.column! >= 0 ? e.column : undefined,
     });
     if (buffer.length > MAX_BUFFER) buffer.shift();
 }
@@ -108,8 +117,9 @@ function parseCdpArgs(args: any[]): string {
 function handleCdpConsoleEvent(params: any): void {
     const rawType = params.type || 'log';
     const type = rawType === 'warning' ? 'warn' : rawType;
-    const message = parseCdpArgs(params.args || []).slice(0, MAX_MSG_LEN);
+    const message = parseCdpArgs(params.args || []);
     const firstFrame = params.stackTrace?.callFrames?.[0];
+    const error = (params.args || []).find((arg: any) => arg.subtype === 'error');
 
     push({
         type,
@@ -119,6 +129,31 @@ function handleCdpConsoleEvent(params: any): void {
         url: firstFrame?.url,
         line: firstFrame?.lineNumber,
         column: firstFrame?.columnNumber,
+        name: error?.className,
+        stack: [error?.description, cdpStack(params.stackTrace)].filter(Boolean).join('\n'),
+    });
+}
+
+function cdpStack(trace: any): string {
+    // ponytail: bound async-parent traversal; diagnostics need no source-map resolver.
+    const frames: string[] = [];
+    for (let depth = 0; trace && depth < 8 && frames.length < 32; depth++, trace = trace.parent) {
+        for (const frame of (trace.callFrames || []).slice(0, 32 - frames.length)) {
+            frames.push(`    at ${frame.functionName || '<anonymous>'} (${frame.url || ''}:${frame.lineNumber + 1}:${frame.columnNumber + 1})`);
+        }
+    }
+    return frames.join('\n');
+}
+
+function handleCdpException(params: any): void {
+    const details = params.exceptionDetails || {};
+    const error = details.exception || {};
+    push({
+        type: 'error', timestamp: params.timestamp || Date.now(), args: [],
+        message: error.description || (error.value !== undefined ? String(error.value) : details.text) || 'Uncaught exception',
+        name: error.className,
+        stack: [error.description, cdpStack(details.stackTrace)].filter(Boolean).join('\n'),
+        url: details.url, line: details.lineNumber, column: details.columnNumber,
     });
 }
 
@@ -137,14 +172,18 @@ const INJECTION_SCRIPT = `
     window.__mcpLogBuffer = [];
     var MAX = 1000;
     var MAX_TEXT = 300;
+    var restores = [];
+    var active = true;
 
     function redact(value, limit) {
         return String(value || '')
+            .replace(/\\b(password|client[_-]?secret|secret|access[_-]?token|refresh[_-]?token|token|x-?api[_-]?key|api[_-]?key)["']?\\s*[:=]\\s*(["'])(?:\\\\.|(?!\\2)[^\\\\])*\\2/gi, '$1=$2[REDACTED]$2')
             .replace(/\\b(authorization|cookie|set-cookie)\\s*[:=]\\s*[^\\r\\n,]*/gi, '$1: [REDACTED]')
             .replace(/\\bbearer\\s+[^\\s,;]+/gi, 'Bearer [REDACTED]')
+            .replace(/(https?:\\/\\/)[^\\s/?#]+@/gi, '$1[REDACTED]@')
             .replace(/([?&;,#\\s]|^)(access[_-]?token|refresh[_-]?token|token|password|client[_-]?secret|secret|x-?api[_-]?key|api[_-]?key)\\s*[=:]\\s*[^&#\\s,;]+/gi, '$1$2=[REDACTED]')
             .replace(/\\b(access[_-]?token|refresh[_-]?token|token|password|client[_-]?secret|secret|x-?api[_-]?key|api[_-]?key)\\s+[^\\s,;]+/gi, '$1 [REDACTED]')
-            .replace(/\\bcookie\\s+[\\w-]+=[^\\s,;]+/gi, 'cookie [REDACTED]')
+            .replace(/\\bcookie\\s+[^\\r\\n,]*/gi, 'cookie [REDACTED]')
             .replace(/(["'])(access[_-]?token|refresh[_-]?token|token|password|client[_-]?secret|secret|x-?api[_-]?key|api[_-]?key)\\1\\s*:\\s*(["'])[^"']*\\3/gi, '$1$2$1: $3[REDACTED]$3')
             .slice(0, limit);
     }
@@ -156,16 +195,19 @@ const INJECTION_SCRIPT = `
             for (var i = 3; i < Math.min(lines.length, 16); i++) {
                 var m = lines[i].match(/\\((.+?):(\\d+):(\\d+)\\)/);
                 if (!m) m = lines[i].match(/at\\s+(.+?):(\\d+):(\\d+)/);
-                if (m && !m[1].includes('mcp-log-capture')) return { url: m[1], line: parseInt(m[2]), col: parseInt(m[3]) };
+                if (m && !m[1].includes('mcp-log-capture')) return { url: m[1], line: parseInt(m[2]) - 1, col: parseInt(m[3]) - 1 };
             }
         }
         return null;
     }
     
-    function capture(type, args) {
+    function capture(type, args, source) {
+        if (!active) return;
         try {
-            var caller = parseCaller();
+            var caller = source || parseCaller();
+            var error = Array.prototype.find.call(args, function(a) { return a && typeof a.stack === 'string'; });
             var msg = Array.prototype.slice.call(args).map(function(a) {
+                if (a && typeof a.stack === 'string') return a.message || a.stack;
                 if (typeof a === 'object') try { return JSON.stringify(a); } catch(e) {}
                 return String(a);
             }).join(' ');
@@ -173,6 +215,8 @@ const INJECTION_SCRIPT = `
                 t: type === 'warning' ? 'warn' : type,
                 ts: Date.now(),
                 m: redact(msg, MAX_TEXT),
+                n: error ? redact(error.name, 128) : undefined,
+                s: error ? redact(error.stack, 4096) : undefined,
                 u: caller ? redact(caller.url, MAX_TEXT) : undefined,
                 l: caller ? caller.line : undefined,
                 c: caller ? caller.col : undefined
@@ -189,18 +233,43 @@ const INJECTION_SCRIPT = `
                     return Reflect.apply(target, thisArg, argumentsList);
                 }
                 window.__mcpLogRecursionGuard = true;
-                capture(k, argumentsList);
-                var ret = Reflect.apply(target, thisArg, argumentsList);
-                window.__mcpLogRecursionGuard = false;
-                return ret;
+                try {
+                    capture(k, argumentsList);
+                    return Reflect.apply(target, thisArg, argumentsList);
+                } finally { window.__mcpLogRecursionGuard = false; }
             }
         });
     }
+    function wrap(owner, key) {
+        var original = owner[key];
+        var proxy = createProxy(original, key);
+        owner[key] = proxy;
+        restores.push(function() { if (owner[key] === proxy) owner[key] = original; });
+    }
+
+    function onError(event) {
+        capture('error', [event.error || event.message], { url: event.filename, line: event.lineno - 1, col: event.colno - 1 });
+    }
+    function onRejection(event) { capture('error', [event.reason]); }
+    window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
+    window.__mcpLogCleanup = function() {
+        active = false;
+        clearInterval(timer);
+        clearTimeout(stopTimer);
+        window.removeEventListener('error', onError);
+        window.removeEventListener('unhandledrejection', onRejection);
+        restores.forEach(function(restore) { restore(); });
+        window.__mcpLogInjected = false;
+        window.__mcpCcHijacked = false;
+        window.__mcpLogBuffer = [];
+        delete window.__mcpLogCleanup;
+    };
     
     var methods = ['log', 'warn', 'error', 'info', 'debug'];
     methods.forEach(function(k) {
         if (console[k]) {
-            console[k] = createProxy(console[k], k);
+            wrap(console, k);
         }
     });
 
@@ -210,7 +279,7 @@ const INJECTION_SCRIPT = `
             window.__mcpCcHijacked = true;
             ['log', 'warn', 'error'].forEach(function(k) {
                 if (window.cc[k]) {
-                    window.cc[k] = createProxy(window.cc[k], k);
+                    wrap(window.cc, k);
                 }
             });
             console.log('[MCP] cc 对象引擎日志通道劫持已完成');
@@ -225,7 +294,7 @@ const INJECTION_SCRIPT = `
             if (window.__mcpCcHijacked) clearInterval(timer);
         }, 500);
         // 10秒后停止轮询，防止非 cocos 环境死循环
-        setTimeout(function() { clearInterval(timer); }, 10000);
+        var stopTimer = setTimeout(function() { clearInterval(timer); }, 10000);
     }
     
     console.log('[MCP] 日志捕获已启用');
@@ -282,6 +351,8 @@ export async function initCdpLogListener(silent = false): Promise<boolean> {
                 _cdpMessageListener = (_ev: any, method: string, params: any) => {
                     if (method === 'Runtime.consoleAPICalled') {
                         handleCdpConsoleEvent(params);
+                    } else if (method === 'Runtime.exceptionThrown') {
+                        handleCdpException(params);
                     }
                 };
                 (game as any).debugger.on('message', _cdpMessageListener);
@@ -330,10 +401,10 @@ export async function initCdpLogListener(silent = false): Promise<boolean> {
                 push({
                     type: level === 1 ? 'warn' : (level >= 2 ? 'error' : 'log'),
                     timestamp: Date.now(),
-                    message: message.slice(0, MAX_MSG_LEN),
+                    message,
                     args: [],
                     url: sourceId || undefined,
-                    line: line || undefined,
+                    line: Number.isSafeInteger(line) && line > 0 ? line - 1 : undefined,
                     column: undefined,
                 });
             };
@@ -391,6 +462,8 @@ export async function getCdpLogs(query: CdpLogsQuery = {}): Promise<CdpLogsResul
                         type: entry.t || 'log',
                         timestamp: entry.ts || Date.now(),
                         message: entry.m || '',
+                        name: entry.n,
+                        stack: entry.s,
                         args: [],
                         url: entry.u,
                         line: entry.l,
@@ -416,12 +489,18 @@ export async function getCdpLogs(query: CdpLogsQuery = {}): Promise<CdpLogsResul
         r = r.filter(e => e.type === 'warn' || e.type === 'error');
     }
 
+    const items = r.slice(-tail);
+    // Bound UTF-8 bytes too: a full tail of stacks can otherwise exceed IPC/MCP budgets.
+    let bytes = Buffer.byteLength(JSON.stringify(items), 'utf8');
+    while (items.length > 1 && bytes > 100 * 1024 - 512) {
+        bytes -= Buffer.byteLength(JSON.stringify(items.shift()), 'utf8') + 1;
+    }
     return {
-        items: r.slice(-tail),
+        items,
         nextCursor: newestCursor,
         total: r.length,
         dropped,
-        truncated: reset || dropped > 0 || r.length > tail,
+        truncated: reset || dropped > 0 || r.length > items.length,
     };
 }
 
@@ -444,6 +523,9 @@ export function getCdpStatus(): { attached: boolean; size: number; method: strin
 /** 断开并清空 */
 export function detachCdpListener(): void {
     const current = targetWC;
+    if (_useInjection && current && !current.isDestroyed?.()) {
+        try { current.executeJavaScript('window.__mcpLogCleanup && window.__mcpLogCleanup()').catch(() => {}); } catch (_) {}
+    }
     try {
         if (_nativeConsoleListener) current?.removeListener?.('console-message', _nativeConsoleListener);
         if (_targetDestroyedListener) current?.removeListener?.('destroyed', _targetDestroyedListener);
