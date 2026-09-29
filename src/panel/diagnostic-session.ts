@@ -6,6 +6,8 @@ const methods: Record<string,string> = {
     runtime_hit_candidates:'window.__mcpNodePicker.getCandidates(input.x,input.y,input.limit)',
     runtime_render_summary:'window.__mcpRenderDebuggerHook.captureSummary(input,id)',
     runtime_environment:'window.__mcpEnvironment.getEnvironment()',
+    runtime_bundle_inventory:'window.__mcpResourceInventory.inventory(input)',
+    runtime_asset_detail:'window.__mcpResourceInventory.detail(input)',
     runtime_storage:'window.__mcpEnvironment.readStorage(input)',
 };
 export function createDiagnosticSession(getView:()=>any, getProject:()=>string) {
@@ -35,7 +37,7 @@ export function createDiagnosticSession(getView:()=>any, getProject:()=>string) 
             const scoped=name==='runtime_trace_node'||name==='runtime_render_summary';
             const input=scoped?args && args.input:args;
             const key=scoped?keyOf(args && args.ownership):randomBytes(24).toString('hex');
-            if(!validDiagnosticArgs(name,input)||!key||scoped && args.projectPath!==getProject()) return Promise.resolve(fail('INVALID_OBSERVATION_ARGUMENTS'));
+            if(!validDiagnosticArgs(name,input)||!key||scoped && args.projectPath!==getProject()) return Promise.resolve(fail(name==='runtime_bundle_inventory'||name==='runtime_asset_detail'?'INVALID_RESOURCE_QUERY':'INVALID_OBSERVATION_ARGUMENTS'));
             if(active.has(key)||(retired.get(key)||0)>Date.now()||active.size>=4) return Promise.resolve(fail('OBSERVATION_BUSY'));
             return new Promise(resolve=>{
                 const cleanup:Array<()=>void>=[];

@@ -252,7 +252,7 @@ export function setupTools(server: Server, sendRpcToCocos: (method: string, args
             // For others, simply proxy to Cocos via general RPC
             const result = await sendRpcToCocos(name, args);
             if (result && result.content) {
-                return { content: result.content };
+                return { content: result.content, ...(result.isError === true ? { isError: true } : {}) };
             }
             return {
                 isError: true,

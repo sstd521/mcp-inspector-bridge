@@ -5,6 +5,8 @@ const definitions: any[] = [
     ['runtime_hit_candidates', 'List overlapping geometric candidates at viewport CSS client coordinates. Candidates are not proven input receivers; masks and propagation require separate evidence.', { x:{type:'number'}, y:{type:'number'}, limit:integer(1,32) }, ['x','y']],
     ['runtime_render_summary', 'Capture a short bounded summary of existing render batch-break diagnostics, restoring hooks afterwards. Reasons are evidence, not proof of a texture cause.', { durationMs:integer(50,1000), limit:integer(1,64) }, []],
     ['runtime_environment', 'Read whitelisted engine, device, resolution, physics and atlas settings.', {}, []],
+    ['runtime_bundle_inventory', 'Read a bounded live snapshot of loaded bundle config members and cached assets. Membership is not exclusive ownership; loaded and refCount can be unknown. Pagination is not a frozen transaction. URL/path cache keys are omitted with skippedIdentifiers and incomplete totals.', { bundle:text, type:text, cached:{type:'boolean'}, offset:{...integer(0,20000),default:0}, limit:{...integer(1,50),default:25} }, []],
+    ['runtime_asset_detail', 'Read one runtime asset, all observed bundle memberships and bounded dependency-cache edges. Cached dependents do not identify node or JavaScript holders.', { uuid:text }, ['uuid']],
     ['runtime_storage', 'Read local storage metadata by default, or values only for explicitly requested keys. Sensitive keys/values are redacted; reads are bounded; never writes.', { keys:{type:'array',items:text,minItems:1,maxItems:8,uniqueItems:true}, prefix:{type:'string',maxLength:128}, limit:integer(1,64) }, []],
 ];
 export const DIAGNOSTIC_TOOLS = definitions.map(([name,description,properties,required]) => ({name,description,
