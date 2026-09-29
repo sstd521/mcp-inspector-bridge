@@ -1,3 +1,4 @@
+import { DIAGNOSTIC_TOOLS } from '../runtime-diagnostic-contract';
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -9,6 +10,7 @@ export function setupTools(server: Server, sendRpcToCocos: (method: string, args
     server.setRequestHandler(ListToolsRequestSchema, async () => {
         return {
             tools: [
+                ...DIAGNOSTIC_TOOLS,
                 {
                     name: "ping",
                     description: "Test the connection to the Cocos Inspector Bridge",
@@ -45,7 +47,7 @@ export function setupTools(server: Server, sendRpcToCocos: (method: string, args
                     description: "Get detailed information about a node by UUID.",
                     inputSchema: { 
                         type: "object", 
-                        properties: { uuid: { type: "string" } }, 
+                        properties: { uuid: { type: "string" }, includeRuntime: { type: "boolean", description: "Include bounded runtime instance fields; defaults to false." } },
                         required: ["uuid"] 
                     },
                 },

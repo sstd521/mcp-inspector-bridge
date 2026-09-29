@@ -1,8 +1,10 @@
+import { DIAGNOSTIC_TOOLS } from './runtime-diagnostic-contract';
 import * as WebSocket from 'ws';
 import { randomBytes } from 'crypto';
 declare const Editor: any;
 
 const TOOL_IPC_MAP: Record<string, string> = {
+    ...Object.fromEntries(DIAGNOSTIC_TOOLS.map(tool => [tool.name, 'mcp-' + tool.name.replace(/_/g, '-')])),
     'get_selected_node': 'mcp-query-selected-node',
     'capture_runtime_screenshot': 'mcp-capture-screenshot',
     'get_node_detail': 'mcp-query-node-detail',
@@ -167,7 +169,7 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
                 const cancelInput = (request: any) => {
                     if (request.canceled) return Promise.resolve();
                     request.canceled = true;
-                    return dispatchToPanelWithTimeout('mcp-cancel-input', {
+                    return dispatchToPanelWithTimeout(request.observation ? 'mcp-cancel-observation' : 'mcp-cancel-input', {
                     ...request.ownership, projectPath: request.projectPath,
                     }, 500).catch(() => undefined);
                 };
@@ -209,10 +211,13 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
                     
                     if (data.method === 'tools/call' && data.params) {
                         const name = data.params.name;
-                        const controlledWrite = name === 'simulate_input' || name === 'refresh_preview';
+                        const controlledWrite = name === 'simulate_input' || name === 'refresh_preview' || name === 'invoke_component_method';
                         const args = data.params.args || {};
                         const reqId = data.id || Date.now().toString();
-                        const inputRequest = name === 'simulate_input' ? {
+                        const observation = name === 'runtime_trace_node' || name === 'runtime_render_summary';
+                        const diagnostic = DIAGNOSTIC_TOOLS.some(tool => tool.name === name);
+                        const inputRequest = name === 'simulate_input' || observation ? {
+                            ...(observation ? { observation: true } : {}),
                             input: args, ownership: { owner, requestId: randomBytes(24).toString('hex') },
                             projectPath: Editor.Project?.path || '',
                         } : null;
@@ -305,7 +310,7 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
                                 : await dispatchToPanelWithTimeout(ipcChannel, inputRequest || args,
                                     name === 'simulate_input' ? 4000 : name === 'refresh_preview' ? 10000 : 3000);
                             let contentText = '';
-                            const controlledFailure = controlledWrite && (!res || res.success === false || res.error);
+                            const controlledFailure = (controlledWrite || diagnostic) && (!res || res.success === false || res.error);
                             if (controlledFailure) {
                                 contentText = JSON.stringify({ success: false,
                                     error: typeof res?.error === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/.test(res.error)
@@ -350,7 +355,7 @@ export function startMcpRouter(onStatusChange: (status: any) => void): { close: 
                             ws.send(JSON.stringify({
                                 jsonrpc: "2.0",
                                 id: reqId,
-                                result: controlledWrite
+                                result: diagnostic ? { isError: true, content: [{ type: 'text', text: JSON.stringify({ success:false, error:'DIAGNOSTIC_UNAVAILABLE' }) }] } : controlledWrite
                                     ? { isError: true, content: [{ type: 'text', text: JSON.stringify({ success: false,
                                         error: 'RUNTIME_OPERATION_FAILED', status: 'partial', verified: false, retryable: false }) }] }
                                     : { content: [{ type: "text", text: `Execution failed: ${err.message}` }] }

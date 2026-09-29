@@ -146,14 +146,41 @@ export function initPicker() {
         },
 
         hitTest: function (clientX, clientY) {
+            const result = this._collectHits(clientX, clientY, 1);
+            return result.hits.length ? result.hits[0].node : null;
+        },
+
+        getCandidates: function (clientX, clientY, limit = 16) {
+            const result = this._collectHits(clientX, clientY, limit);
+            const candidates = result.hits.map(({ node, camera }) => {
+                const names = [];
+                let parent = node;
+                for (let i = 0; parent && i < 128; i++, parent = parent.parent) names.unshift(String(parent.name || '').slice(0, 256));
+                return {
+                    uuid: String(node.uuid || node.id || ''), name: String(node.name || '').slice(0, 256), path: names.join('/'),
+                    camera: { uuid: String(camera.node && (camera.node.uuid || camera.node.id) || ''), name: String(camera.node && camera.node.name || '').slice(0, 256), depth: Number(camera.depth) || 0 },
+                    components: (node._components || []).slice(0, 32).map(comp => String(comp && comp.constructor && comp.constructor.name || comp && comp.name || '').slice(0, 128))
+                };
+            });
+            return { candidates, geometryOnly: true, coordinateSpace: 'client', truncated: result.truncated, visitedNodes: result.visitedNodes, ...(result.error ? { error: result.error } : {}) };
+        },
+
+        _collectHits: function (clientX, clientY, limit) {
+            const result = { hits: [], truncated: false, visitedNodes: 0 };
+            if (!Number.isFinite(clientX) || !Number.isFinite(clientY) || !Number.isInteger(limit) || limit < 1 || limit > 64) {
+                return { ...result, error: 'INVALID_ARGUMENTS' };
+            }
+            const seen = new Set();
             const eng = getCcEngine();
-            if (!eng || !eng.director || !eng.view) return null;
+            if (!eng || !eng.director || !eng.view) return { ...result, error: 'ENGINE_UNAVAILABLE' };
             const scene = eng.director.getScene();
-            if (!scene) return null;
+            if (!scene) return { ...result, error: 'SCENE_UNAVAILABLE' };
 
             // DOM坐标换算到逻辑屏幕坐标 screenPt
             const canvas = document.getElementById('GameCanvas');
             const rect = canvas ? canvas.getBoundingClientRect() : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight, width: window.innerWidth, height: window.innerHeight };
+
+            if (rect.width <= 0 || rect.height <= 0 || clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return result;
 
             const frameSize = eng.view.getFrameSize();
             const visibleOrigin = eng.view.getVisibleOrigin ? eng.view.getVisibleOrigin() : { x: 0, y: 0 };
@@ -178,10 +205,14 @@ export function initPicker() {
             
             // 按照 depth 降序排序，确保最顶层的相机最先发射射线
             const sortedCameras = validCameras.sort(function (a, b) { return b.depth - a.depth; });
-            if (sortedCameras.length === 0) return null;
+            if (sortedCameras.length === 0) return result;
 
             // 递归拦截探测
             function walkSceneForCamera(node, camera, worldPos, depth = 0, parentValidated = false) {
+                // ponytail: bounded scene walk; report truncation instead of freezing a large runtime.
+                if (result.visitedNodes >= 10000) { result.truncated = true; return true; }
+                result.visitedNodes++;
+                if (depth > 128) { result.truncated = true; return null; }
                 if (eng.Scene && node instanceof eng.Scene) {
                     const children = node.children;
                     for (let i = children.length - 1; i >= 0; i--) {
@@ -284,7 +315,12 @@ export function initPicker() {
 
                         const rectTest = eng.rect(-ax * node.width, -ay * node.height, node.width, node.height);
                         if (rectTest.contains(localPt)) {
-                            return node;
+                            const id = node.uuid || node.id || node;
+                            if (!seen.has(id)) {
+                                seen.add(id);
+                                if (result.hits.length >= limit) { result.truncated = true; return true; }
+                                result.hits.push({ node, camera });
+                            }
                         }
                     }
                 }
@@ -292,25 +328,17 @@ export function initPicker() {
                 return null;
             }
 
-            // 摄像机降序发牌 (Camera Loop) -> Camera-First Raycast
+            // Camera depth and reverse child order preserve the existing visual picking order.
             for (let c = 0; c < sortedCameras.length; c++) {
+                if (c >= 32) { result.truncated = true; break; }
                 const camera = sortedCameras[c];
-                if (camera.enabled === false) continue;
-
+                if (camera.enabled === false || camera.node && camera.node.activeInHierarchy === false) continue;
                 if (typeof camera.getScreenToWorldPoint !== 'function') continue;
-
-                // 直接生成最受相机透视、位移、DPR、Viewport影响的最还原的专属射线点
                 const worldPos = camera.getScreenToWorldPoint(screenPt);
                 if (!worldPos) continue;
-
-                // 向该相机的业务范围发射专署探寻，寻找其管辖下可发生阻拦的最近节点
-                let hitNode = walkSceneForCamera(scene, camera, worldPos, 0, false);
-                if (hitNode) {
-                    Logger.log(`[Picker Result] 摄像机层级拦截响应！选中目标 = ${hitNode.name}，所属摄像机 = ${camera.node ? camera.node.name : 'Unknown'}`);
-                    return hitNode;
-                }
+                if (walkSceneForCamera(scene, camera, worldPos, 0, false)) break;
             }
-            return null;
+            return result;
         }
     };
 }

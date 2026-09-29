@@ -1,3 +1,4 @@
+(async () => {
 const assert = require('assert');
 const { compile } = require('vue');
 
@@ -114,10 +115,10 @@ assert.strictEqual(crawler.simulateButtonClick('button-node', 0), true);
 assert.strictEqual(handlerCalls, 3);
 assert.strictEqual(nodeClickCalls, 1);
 assert.deepStrictEqual(detail.components[1].methods, ['refresh']);
-assert.strictEqual(crawler.executeComponentMethod('button-node', 1, 'refresh'), true);
+assert.strictEqual((await crawler.executeComponentMethod('button-node', 1, 'refresh')).success, true);
 assert.strictEqual(componentMethodCalls, 1);
-assert.strictEqual(crawler.executeComponentMethod('button-node', 1, '_privateMethod'), false);
-assert.strictEqual(crawler.executeComponentMethod('button-node', 1, 'withArg'), false);
+assert.strictEqual((await crawler.executeComponentMethod('button-node', 1, '_privateMethod')).success, false);
+assert.strictEqual((await crawler.executeComponentMethod('button-node', 1, 'withArg')).success, false);
 assert.strictEqual(crawler.printComponentData('button-node', 1), true);
 assert.strictEqual(window.$mcpComp, runtimeComponent);
 assert.strictEqual(crawler.printNodeData('button-node'), true);
@@ -271,3 +272,5 @@ assert(sourcePanelTs.includes('showMcpToast'));
 assert(builtPanelSource.includes('showMcpToast'));
 
 console.log('button-events.test.js: ok');
+
+})().catch(error => { console.error(error); process.exitCode = 1; });

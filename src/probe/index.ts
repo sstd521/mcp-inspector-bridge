@@ -7,6 +7,8 @@ import { initProfiler } from './profiler';
 import { initMemory } from './memory';
 import { initRenderDebugger } from './render-debugger';
 import { initPicker } from './picker';
+import { initNodeTrace } from './node-trace';
+import { initEnvironment } from './environment';
 
 import { getCcEngine } from './engine-helper';
 
@@ -24,6 +26,8 @@ import { getCcEngine } from './engine-helper';
     initMemory();
     initRenderDebugger();
     initPicker();
+    initNodeTrace();
+    initEnvironment();
 
     const DEBUG_INTERVAL = 1000;
 

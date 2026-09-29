@@ -270,7 +270,7 @@ export const NodeInspector = {
                                         
                                         <!-- Unsupported -->
                                         <div v-else style="color: #888; font-style: italic; background: #2a2a2a; padding: 2px 4px; font-size: 11px;">
-                                            [不支持的类型]
+                                            {{ prop.type === 'null' ? 'null' : prop.type === 'undefined' ? 'undefined' : prop.type === 'read_error' ? '读取失败' : '[不支持的类型]' }} {{ prop.declaredType ? '[' + prop.declaredType + ']' : '' }}
                                         </div>
                                     </div>
                                 </div>

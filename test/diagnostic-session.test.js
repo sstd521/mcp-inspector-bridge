@@ -1,0 +1,19 @@
+const assert=require('assert'),fs=require('fs'),vm=require('vm');
+assert(fs.existsSync(require('path').join(__dirname,'../dist/panel/diagnostic-session.js')),'diagnostic session must exist');
+const {createDiagnosticSession}=require('../dist/panel/diagnostic-session');
+(async()=>{
+ let resolveTrace;const listeners=new Map(), cancels=[];let guest=1;
+ const win={__mcpCrawler:{getInputContext:()=>({id:'scene'})},__mcpNodeTrace:{observe:()=>new Promise(r=>resolveTrace=r),cancel:id=>cancels.push(id)},__mcpEnvironment:{getEnvironment:()=>({version:'2.4.7'})}};
+ const view={isConnected:true,getWebContentsId:()=>guest,addEventListener:(k,f)=>listeners.set(k,f),removeEventListener:k=>listeners.delete(k),executeJavaScript:code=>Promise.resolve(vm.runInNewContext(code,{window:win,Date}))};
+ const session=createDiagnosticSession(()=>view,()=>'/project');
+ const ownership={owner:'a'.repeat(48),requestId:'b'.repeat(48)};const args={input:{uuid:'node',durationMs:50},ownership,projectPath:'/project'};
+ const p=session.run('runtime_trace_node',args);await new Promise(r=>setImmediate(r));assert(resolveTrace);
+ assert.strictEqual((await session.cancel({...ownership,owner:'c'.repeat(48),projectPath:'/project'})).canceled,false);
+ await session.cancel({...ownership,projectPath:'/project'});assert.strictEqual((await p).error,'OBSERVATION_CANCELED');assert.strictEqual(cancels.length,1);assert.strictEqual(listeners.size,0);
+ assert.strictEqual((await session.run('runtime_trace_node',args)).success,false);
+ const env=await session.run('runtime_environment',{});assert.strictEqual(env.success,true);assert.strictEqual(env.version,'2.4.7');
+ assert.strictEqual((await session.run('runtime_environment',{eval:'bad'})).success,false);
+ const p2=session.run('runtime_trace_node',{...args,ownership:{...ownership,requestId:'d'.repeat(48)}});await new Promise(r=>setImmediate(r));guest++;resolveTrace({success:true,events:[]});assert.strictEqual((await p2).error,'OBSERVATION_CONTEXT_CHANGED');
+ session.close();assert.strictEqual((await session.run('runtime_environment',{})).success,false);
+ console.log('diagnostic-session.test.js: ok');
+})().catch(e=>{console.error(e);process.exitCode=1;});

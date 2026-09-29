@@ -1,3 +1,4 @@
+import { invokeComponentMethod } from '../component-invocation';
 const { nextTick, onUnmounted } = require('vue');
 declare const Editor: any;
 
@@ -84,7 +85,11 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
                     oComp.properties.forEach((p: any) => pMap[p.key] = p);
                     nComp.properties.forEach((np: any) => {
                         if (pMap[np.key]) {
-                            pMap[np.key].value = np.value;
+                            const existing = pMap[np.key];
+                            for (const key of Object.keys(existing)) {
+                                if (!Object.prototype.hasOwnProperty.call(np, key)) delete existing[key];
+                            }
+                            Object.assign(existing, np);
                         } else {
                             oComp.properties.push(np); 
                         }
@@ -404,11 +409,11 @@ export function useNodeSystem(globalState: any, gameView: any, nodeTreeRef: any,
         if (!component || !methodName || !globalState.nodeDetail) return false;
         const wv: any = gameView.value;
         if (!isWebViewReady(wv)) return false;
-        const success = await wv.executeJavaScript(
-            `window.__mcpCrawler && window.__mcpCrawler.executeComponentMethod(${JSON.stringify(globalState.nodeDetail.id)}, ${Number(component.realIndex)}, ${JSON.stringify(methodName)})`,
-        );
-        if (!success && typeof Editor !== 'undefined') Editor.warn(`[Bridge] 组件方法调用失败: ${methodName}()`);
-        return !!success;
+        const result = await invokeComponentMethod(() => gameView.value, {
+            uuid: globalState.nodeDetail.id, compIndex: component.realIndex, methodName,
+        });
+        if (!result.success && typeof Editor !== 'undefined') Editor.warn(`[Bridge] 组件方法未确认完成: ${methodName}() (${result.error})`);
+        return result.success === true;
     };
 
     const onButtonAction = async (action: string, component: any, eventInfo: any) => {
