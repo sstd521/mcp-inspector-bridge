@@ -60,6 +60,7 @@ let _nativeConsoleListener: any = null;
 let _cdpMessageListener: any = null;
 let _cdpDetachListener: any = null;
 let _targetDestroyedListener: any = null;
+let _frameLoadedListener: any = null;
 const CDP_PROTOCOL_VERSION = '1.3';
 
 /** 将日志条目推入 RingBuffer（自动截断到 MAX_BUFFER 上限） */
@@ -419,6 +420,12 @@ export async function initCdpLogListener(silent = false): Promise<boolean> {
             _useCdp = false;
             _cdpAttached = false;
         };
+        _frameLoadedListener = (_event: any, isMainFrame: boolean) => {
+            if (isMainFrame !== true || !_useInjection || game.isDestroyed?.()) return;
+            // A reload discards the fallback console proxy; CDP survives navigation.
+            game.executeJavaScript(INJECTION_SCRIPT).catch(() => {});
+        };
+        game.on('did-frame-finish-load', _frameLoadedListener);
         game.once('destroyed', _targetDestroyedListener);
 
         listening = true;
@@ -529,6 +536,7 @@ export function detachCdpListener(): void {
     try {
         if (_nativeConsoleListener) current?.removeListener?.('console-message', _nativeConsoleListener);
         if (_targetDestroyedListener) current?.removeListener?.('destroyed', _targetDestroyedListener);
+        if (_frameLoadedListener) current?.removeListener?.('did-frame-finish-load', _frameLoadedListener);
         if (_cdpMessageListener) current?.debugger?.removeListener?.('message', _cdpMessageListener);
         if (_cdpDetachListener) current?.debugger?.removeListener?.('detach', _cdpDetachListener);
     } catch (_) {
@@ -543,5 +551,6 @@ export function detachCdpListener(): void {
     _cdpMessageListener = null;
     _cdpDetachListener = null;
     _targetDestroyedListener = null;
+    _frameLoadedListener = null;
     buffer = [];
 }

@@ -107,7 +107,10 @@ export function initCrawler() {
         if (!inputContext || inputContext.scene !== scene || inputContext.canvas !== canvas || inputContext.eng !== eng || inputContext.signature !== signature) {
             inputContext = { id: randomId(), scene, canvas, eng, signature, data };
         }
-        return { id: inputContext.id, ...data };
+        const frame = eng.director && typeof eng.director.getTotalFrames === 'function'
+            ? eng.director.getTotalFrames() : null;
+        return { id: inputContext.id, ...data,
+            ...(Number.isSafeInteger(frame) && frame >= 0 ? { frame } : {}) };
     }
     function inputBusy(key) {
         const manager = window.cc?.internal?.inputManager;
@@ -1043,9 +1046,46 @@ export function initCrawler() {
                 if (inputBusy(key)) return failure('INPUT_BUSY');
                 const targetNode = args.uuid ? this.findNodeByUuid(args.uuid) : null;
                 const touchId = 100000 + parseInt(randomId().slice(-6), 16);
+                const inputFrame = typeof eng.director.getTotalFrames === 'function' ? eng.director.getTotalFrames() : null;
+                let candidateNode = '';
+                try {
+                    const picked = window.__mcpNodePicker?.hitTest(clientX, clientY);
+                    const names = [];
+                    for (let node = picked; node && names.length < 12; node = node.parent) {
+                        if (typeof node.name !== 'string') break;
+                        names.unshift(node.name);
+                    }
+                    candidateNode = names.join('/').slice(0, 256);
+                } catch (_) { /* Geometry is advisory; input delivery must continue. */ }
+                let hitNode = '', hitFrame = null, syntheticDispatch = false;
+                let restoreHitProbe = () => {};
+                try {
+                    const prototype = eng.Node && eng.Node.prototype;
+                    const original = prototype && prototype.dispatchEvent;
+                    if (typeof original === 'function') {
+                        const eventTypes = eng.Node.EventType || { MOUSE_UP: 'mouseup', TOUCH_END: 'touchend' };
+                        const wrapped = function(event) {
+                            if (syntheticDispatch && !hitNode && event && (
+                                event.type === eventTypes.MOUSE_UP || event.type === eventTypes.TOUCH_END
+                            )) {
+                                const names = [];
+                                for (let node = this; node && names.length < 12; node = node.parent) {
+                                    if (typeof node.name !== 'string') break;
+                                    names.unshift(node.name);
+                                }
+                                hitNode = names.join('/').slice(0, 256);
+                                hitFrame = eng.director.getTotalFrames();
+                            }
+                            return original.apply(this, arguments);
+                        };
+                        prototype.dispatchEvent = wrapped;
+                        restoreHitProbe = () => { if (prototype.dispatchEvent === wrapped) prototype.dispatchEvent = original; };
+                    }
+                } catch (_) { /* Event evidence is optional; input delivery must continue. */ }
 
                 function dispatchNativeEvent(type, cx, cy) {
-                    if (useTouch) {
+                    syntheticDispatch = true;
+                    try { if (useTouch) {
                         const touchMap = { 'mousedown': 'touchstart', 'mousemove': 'touchmove', 'mouseup': 'touchend', 'cancel': 'touchcancel' };
                         const touch = new Touch({ identifier: touchId, target: canvas, clientX: cx, clientY: cy });
                         const active = type === 'mouseup' || type === 'cancel' ? [] : [touch];
@@ -1055,7 +1095,7 @@ export function initCrawler() {
                     } else {
                         canvas.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true,
                             clientX: cx, clientY: cy, button: 0, buttons: type === 'mouseup' ? 0 : 1 }));
-                    }
+                    } } finally { syntheticDispatch = false; }
                 }
 
                 const requested = { success: true, msg: 'Requested ' + mode + ' from ' + targetSource };
@@ -1076,11 +1116,16 @@ export function initCrawler() {
                             try { dispatchNativeEvent(error && useTouch ? 'cancel' : 'mouseup', currentX, currentY); lease.released = true; }
                             catch (_) { error = error || 'INPUT_DISPATCH_FAILED'; }
                         }
+                        try { restoreHitProbe(); } catch (_) {}
                         try { if (visualPointer && visualPointer.parentNode) visualPointer.parentNode.removeChild(visualPointer); } catch (_) {}
                         if (activeInput === lease) activeInput = null;
                         rememberInput(key);
                         receipt = error ? failure(error) : { success: true, status: 'completed', completionVerified: true,
-                            completionEvidence: 'input-release-dispatched' };
+                            completionEvidence: 'input-release-dispatched',
+                            ...(Number.isSafeInteger(inputFrame) && inputFrame >= 0 ? { frame: inputFrame } : {}),
+                            ...(candidateNode ? { candidateNode } : {}),
+                            ...(hitNode ? { hitNode, hitEvidence: 'engine-event-dispatched' } : {}),
+                            ...(hitNode && Number.isSafeInteger(hitFrame) && hitFrame >= 0 ? { hitFrame } : {}) };
                         resolve(receipt);
                     };
                     const cancel = () => finish('INPUT_CANCELED');

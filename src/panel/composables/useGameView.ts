@@ -26,7 +26,7 @@ export function useGameView(
         let dispatchAttempted = false;
         let settle: (success: boolean) => void;
         const completion = new Promise<any>(resolve => { settle = success => resolve(success
-            ? { success: true, status: 'completed', completionVerified: true, completionEvidence: 'navigation-finished' }
+            ? { success: true, status: 'completed', completionVerified: true, completionEvidence: 'game-frame-rendered' }
             : { success: false, error: 'PREVIEW_REFRESH_INCOMPLETE',
                 ...(dispatchAttempted ? { status: 'partial', verified: false, retryable: false } : {}) }); });
         const guestId = wv.getWebContentsId();
@@ -72,8 +72,34 @@ export function useGameView(
                 try {
                     if (!current() || normalizeUrl(wv.getURL()) !== expectedUrl) { cancel(); return; }
                 } catch (_) { cancel(); return; }
-                // Keep Vue's bound src unchanged: even assigning the same native src triggers another load.
-                finish(true);
+                // Navigation alone can finish before Creator has drawn anything.
+                try { Promise.resolve(wv.executeJavaScript(`new Promise(resolve => {
+                    const deadline = Date.now() + 28000;
+                    const tick = () => {
+                        if (Date.now() >= deadline) { resolve(false); return; }
+                        let engine = window.cc;
+                        if (!engine) try {
+                            const frame = document.getElementById('GameDiv');
+                            engine = frame && frame.contentWindow && frame.contentWindow.cc;
+                        } catch (_) {}
+                        if (!engine) for (let i = 0; i < window.frames.length; i++) {
+                            try { if (window.frames[i].cc) { engine = window.frames[i].cc; break; } } catch (_) {}
+                        }
+                        const canvas = engine && engine.game && engine.game.canvas;
+                        const frames = engine && engine.director && engine.director.getTotalFrames && engine.director.getTotalFrames();
+                        if (canvas && canvas.width > 0 && canvas.height > 0 && Number.isInteger(frames) && frames > 0) {
+                            requestAnimationFrame(() => {
+                                if (engine.director.getTotalFrames() > frames) resolve(true);
+                                else tick();
+                            });
+                        } else requestAnimationFrame(tick);
+                    };
+                    tick();
+                })`)).then(ready => {
+                    if (!current() || normalizeUrl(wv.getURL()) !== expectedUrl) { cancel(); return; }
+                    if (ready === true) finish(true);
+                    else cancel();
+                }, cancel); } catch (_) { cancel(); }
             }],
             ['did-fail-load', event => {
                 if (started && event.isMainFrame === true && normalizeUrl(event.validatedURL) === expectedUrl) cancel();
@@ -82,7 +108,7 @@ export function useGameView(
         ];
         cancelRefresh = cancel;
         try {
-            timer = setTimeout(cancel, 8000);
+            timer = setTimeout(cancel, 30000);
             stopWatching = watch(() => [globalState.runMode, globalState.isEditorSceneActive, gameView.value], check, { flush: 'sync' });
             for (const [name, listener] of viewListeners) wv.addEventListener(name, listener);
             for (const name of ['panel-close', 'beforeunload', 'unload']) window.addEventListener(name, cancel);
