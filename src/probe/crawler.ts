@@ -74,6 +74,27 @@ function getComponentClassName(comp) {
     return match ? match[1] : cname;
 }
 
+function propertyAttrs(comp, key) {
+    const eng = safeGetCcEngine();
+    const attrs = comp.constructor && comp.constructor.__attrs__ || {};
+    const result = {};
+    for (const name of ['visible', 'enumList', 'ctor']) {
+        for (const separator of ['|', '$_$']) {
+            const value = attrs[key + separator + name];
+            if (value !== undefined) result[name] = value;
+        }
+    }
+    try {
+        if (eng && eng.Class && typeof eng.Class.attr === 'function') {
+            const native = eng.Class.attr(comp.constructor, key);
+            for (const name of ['visible', 'enumList', 'ctor']) {
+                if (native && native[name] !== undefined) result[name] = native[name];
+            }
+        }
+    } catch (_) { /* Older/build engines can omit Class.attr metadata. */ }
+    return result;
+}
+
 export function initCrawler() {
     let inputContext = null;
     let activeInput = null;
@@ -287,7 +308,7 @@ export function initCrawler() {
             }
             return null;
         },
-        getNodeDetail: function (uuid) {
+        getNodeDetail: function (uuid, options = {}) {
             const node = this.findNodeByUuid(uuid);
             if (!node) return null;
 
@@ -382,43 +403,45 @@ export function initCrawler() {
                             comp.constructor.__props__.forEach(p => registeredProps.add(p));
                         }
                         if (comp.constructor.__attrs__) {
-                            Object.keys(comp.constructor.__attrs__).forEach(attrKey => {
-                                const idx = attrKey.indexOf('|');
+                            for (const attrKey in comp.constructor.__attrs__) {
+                                const idx = attrKey.search(/\$_\$|\|/);
                                 if (idx > 0) {
                                     registeredProps.add(attrKey.substring(0, idx));
                                 }
-                            });
+                            }
                         }
                     }
 
-                    if (registeredProps.size > 0) {
-                        propKeys = Array.from(registeredProps);
-                    } else {
-                        propKeys = Object.keys(comp);
+                    const hiddenBuiltins = ["name", "uuid", "node", "enabled", "enabledInHierarchy", "_scriptAsset", "__scriptAsset", "_isOnLoadCalled", "_objFlags", "AnimList", "constructor", "prototype", "__proto__"];
+                    propKeys = Array.from(registeredProps);
+                    if (options.includeRuntime === true || !propKeys.some(key => hiddenBuiltins.indexOf(key) === -1 && !key.startsWith('_'))) {
+                        propKeys = Array.from(new Set(propKeys.concat(Object.keys(comp))));
                     }
-
-                    const hiddenBuiltins = ["name", "uuid", "node", "enabled", "enabledInHierarchy", "_scriptAsset", "__scriptAsset", "_isOnLoadCalled", "_objFlags", "AnimList"];
+                    propKeys = propKeys.filter(key => typeof key === 'string' && hiddenBuiltins.indexOf(key) === -1);
+                    const propertiesTruncated = propKeys.length > 128;
+                    propKeys = propKeys.slice(0, 128);
 
                     for (let j = 0; j < propKeys.length; j++) {
                         const key = propKeys[j];
                         try {
                             if (hiddenBuiltins.indexOf(key) !== -1) continue;
 
-                            let isVisible = true;
-                            if (comp.constructor && comp.constructor.__attrs__) {
-                                const visibleAttr = comp.constructor.__attrs__[key + "|visible"];
-                                if (visibleAttr !== undefined) {
-                                    isVisible = typeof visibleAttr === "function" ? !!visibleAttr.call(comp) : !!visibleAttr;
-                                } else if (key.startsWith("_")) {
-                                    isVisible = false;
-                                }
-                            } else if (key.startsWith("_")) {
-                                isVisible = false;
-                            }
-                            if (!isVisible) continue;
+                            const attrs = propertyAttrs(comp, key);
+                            const visible = attrs.visible;
+                            // Creator 2.4 omits visible:true but stores visible:false for hidden declared fields.
+                            if (visible !== undefined ? !(typeof visible === 'function' ? visible.call(comp) : visible) : key.startsWith('_') && !registeredProps.has(key)) continue;
 
                             const val = comp[key];
                             if (typeof val === "function") continue;
+                            if (val === null || val === undefined) {
+                                const property = { key, type: val === null ? 'null' : 'undefined', value: null };
+                                const ctor = attrs.ctor;
+                                if (typeof ctor === 'function') {
+                                    property.declaredType = (ccEng && ccEng.js && ccEng.js.getClassName(ctor)) || ctor.name || 'Object';
+                                }
+                                props.push(property);
+                                continue;
+                            }
 
                             let type = "unsupported";
                             let exportValue = val;
@@ -500,17 +523,7 @@ export function initCrawler() {
                             if (type !== "unsupported") {
                                 let enumList = null;
 
-                                // Test if component property relies on a Cocos Enum
-                                let eList = null;
-                                if (window.cc && window.cc.Class && typeof window.cc.Class.attr === 'function') {
-                                    const attrObj = window.cc.Class.attr(comp.constructor, key);
-                                    if (attrObj && attrObj.enumList) {
-                                        eList = attrObj.enumList;
-                                    }
-                                }
-                                if (!eList && comp.constructor && comp.constructor.__attrs__) {
-                                    eList = comp.constructor.__attrs__[key + "|enumList"];
-                                }
+                                const eList = attrs.enumList;
 
                                 if (eList && Array.isArray(eList)) {
                                     // Make sure it contains {name, value} or at least valid items
@@ -555,7 +568,7 @@ export function initCrawler() {
                                 if (enumList) propData.enumList = enumList;
                                 props.push(propData);
                             }
-                        } catch (e) { }
+                        } catch (e) { props.push({ key, type: 'read_error', value: null }); }
                     }
                     let scriptUuid = null;
                     if (comp.__scriptAsset) {
@@ -578,6 +591,7 @@ export function initCrawler() {
                         buttonClickEvents: buttonClickEvents,
                         methods: this.getComponentMethodNames(comp),
                         properties: props,
+                        ...(propertiesTruncated ? { propertiesTruncated: true } : {}),
                     });
                 }
             }
@@ -664,15 +678,25 @@ export function initCrawler() {
                 return typeof method === 'function' && method.length === 0;
             }).sort();
         },
-        executeComponentMethod: function (nodeUuid, compIndex, methodName) {
+        executeComponentMethod: async function (nodeUuid, compIndex, methodName) {
+            const eng = safeGetCcEngine();
+            const scene = eng && eng.director.getScene();
             const component = this.getComponentByIndex(nodeUuid, compIndex);
-            if (!component || this.getComponentMethodNames(component).indexOf(methodName) === -1) return false;
+            if (!component || this.getComponentMethodNames(component).indexOf(methodName) === -1) {
+                return { success: false, error: 'METHOD_UNAVAILABLE' };
+            }
             try {
-                component[methodName].call(component);
-                return true;
-            } catch (error) {
-                console.error('[MCP Crawler] 调用组件方法失败', methodName, error);
-                return false;
+                const value = component[methodName].call(component);
+                const asynchronous = value != null && typeof value.then === 'function';
+                if (asynchronous) await value;
+                if (safeGetCcEngine() !== eng || eng.director.getScene() !== scene ||
+                    this.getComponentByIndex(nodeUuid, compIndex) !== component || component.isValid === false) {
+                    return { success: false, error: 'METHOD_CONTEXT_CHANGED', status: 'partial', verified: false, retryable: false };
+                }
+                return { success: true, status: 'completed', completionVerified: true,
+                    completionEvidence: asynchronous ? 'method-promise-resolved' : 'method-returned' };
+            } catch (_) {
+                return { success: false, error: 'METHOD_FAILED', status: 'partial', verified: false, retryable: false };
             }
         },
         prepareButtonClickHandlerInspect: function (nodeUuid, compIndex, eventIndex) {

@@ -1,0 +1,22 @@
+const assert = require('assert');
+const { EventEmitter } = require('events');
+const fs = require('fs');
+assert(fs.existsSync(require('path').join(__dirname, '../dist/probe/node-trace.js')), 'node trace probe must exist');
+const { initNodeTrace } = require('../dist/probe/node-trace');
+(async () => {
+ const node = Object.assign(new EventEmitter(), { uuid:'node', name:'N', x:0, y:0, active:true, activeInHierarchy:true, children:[], isValid:true });
+ node.off = node.removeListener;
+ let scene = { uuid:'scene' };
+ global.window = { cc:{director:{getScene:()=>scene,getTotalFrames:()=>4}}, __mcpCrawler:{findNodeByUuid:id=>id==='node'?node:null}, addEventListener(){}, removeEventListener(){} };
+ initNodeTrace();const trace=window.__mcpNodeTrace;
+ const pending=trace.observe({uuid:'node',durationMs:50,maxEvents:2,includeStack:true},'a');
+ node.x=3;node.emit('position-changed');node.active=false;node.emit('active-in-hierarchy-changed');node.x=4;node.emit('position-changed');
+ const result=await pending;
+ assert.strictEqual(result.success,true);assert.strictEqual(result.events.length,2);assert.strictEqual(result.events[0].before.x,0);assert.strictEqual(result.events[0].after.x,3);assert(Array.isArray(result.events[0].stack),'stack frames must survive per-string output limits');assert(result.events[0].stack.some(frame=>frame.includes('node-trace.test.js')));assert.strictEqual(result.dropped,1);assert.strictEqual(node.eventNames().length,0);
+ const cancelled=trace.observe({uuid:'node',durationMs:100},'owner-a');assert.strictEqual(trace.cancel('owner-b'),false);trace.cancel('owner-a');assert.strictEqual((await cancelled).error,'OBSERVATION_CANCELED');assert.strictEqual(node.eventNames().length,0);
+ const changed=trace.observe({uuid:'node',durationMs:80},'scene');scene={uuid:'new'};assert.strictEqual((await changed).error,'OBSERVATION_CONTEXT_CHANGED');assert.strictEqual(node.eventNames().length,0);
+ assert.strictEqual((await trace.observe({uuid:'node',durationMs:99999},'bad')).error,'INVALID_OBSERVATION_ARGUMENTS');
+ trace.cancel('late');assert.strictEqual((await trace.observe({uuid:'node',durationMs:50},'late')).error,'OBSERVATION_CANCELED');
+ const destroyed=trace.observe({uuid:'node',durationMs:80},'destroyed');node.x=9;node.emit('position-changed');node.isValid=false;const terminal=await destroyed;assert.strictEqual(terminal.success,true);assert.strictEqual(terminal.terminalReason,'node-destroyed');assert.strictEqual(terminal.events.length,1);assert.strictEqual(node.eventNames().length,0);
+ console.log('node-trace.test.js: ok');
+})().catch(e=>{console.error(e);process.exitCode=1;});

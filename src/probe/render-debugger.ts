@@ -1,12 +1,115 @@
 // @ts-nocheck
 import { Logger } from './logger';
+import { getCcEngine } from './engine-helper';
 export function initRenderDebugger() {
             window.__mcpRenderDebuggerHook = {
                 _isActive: false,
+                _patches: [],
+                _hookEpoch: 0,
+                _uiRequestedActive: false,
+                _breaks: [],
+                _breakSequence: 0,
+                _frameSequence: 0,
+                _capturePending: null,
+                _cancelledCaptures: new Map(),
+                _pruneCancelled: function () {
+                    const now = Date.now();
+                    for (const [id, expiry] of this._cancelledCaptures) if (expiry <= now) this._cancelledCaptures.delete(id);
+                    while (this._cancelledCaptures.size > 32) this._cancelledCaptures.delete(this._cancelledCaptures.keys().next().value);
+                },
+                _engine: null,
+                _scene: null,
+                _patch: function (target, key, value) {
+                    const own = Object.prototype.hasOwnProperty.call(target, key);
+                    const original = target[key];
+                    const self = this;
+                    const epoch = this._hookEpoch;
+                    const installed = typeof value === 'function' ? function () {
+                        // A third-party wrapper may retain ours after cleanup; old sessions stay inert.
+                        if (!self._isActive || self._hookEpoch !== epoch) return typeof original === 'function' ? original.apply(this, arguments) : undefined;
+                        return value.apply(this, arguments);
+                    } : value;
+                    this._patches.push(() => {
+                        if (target[key] !== installed) return;
+                        if (own) target[key] = original;
+                        else delete target[key];
+                    });
+                    target[key] = installed;
+                },
+                getSummary: function (options = {}) {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) return { success: false, error: 'INVALID_RENDER_QUERY' };
+                    const limit = options.limit === undefined ? 32 : options.limit;
+                    if (!Number.isInteger(limit) || limit < 1 || limit > 64) return { success: false, error: 'INVALID_RENDER_QUERY' };
+                    const eng = getCcEngine();
+                    const scene = eng && eng.director && eng.director.getScene();
+                    if (!this._isActive) return { success: true, available: false, active: false, reason: 'RENDER_DEBUGGER_DISABLED' };
+                    if (eng !== this._engine || scene !== this._scene) return { success: false, available: false, error: 'RENDER_CONTEXT_CHANGED', verified: false };
+                    const short = value => String(value == null ? '' : value).slice(0, 160);
+                    const frame = this._frames[this._frames.length - 1];
+                    const breaks = this._breaks.filter(item => item.sequence > (options.sinceSequence || 0));
+                    return {
+                        success: true, available: true, active: true,
+                        context: { engineVersion: short(eng.ENGINE_VERSION), sceneUuid: short(scene && (scene.uuid || scene._id)), sceneName: short(scene && scene.name) },
+                        frame: frame ? { frameId: frame.frameId, timestamp: frame.timestamp, totalDrawCalls: frame.totalDrawCalls } : null,
+                        breaks: breaks.slice(-limit).map(item => ({ sequence: item.sequence, frameId: item.frameId,
+                            culprit: short(item.culprit), culpritId: short(item.culpritId), victim: short(item.victim), victimId: short(item.victimId),
+                            reasons: item.reasons.slice(0, 4).map(short) })),
+                        truncated: breaks.length > limit,
+                        capabilities: { batchBreaks: true, drawCalls: !!(this._originDeviceDraw && this._originMainLoop) }
+                    };
+                },
+                captureSummary: async function (options = {}, requestId = '') {
+                    if (!options || typeof options !== 'object' || Array.isArray(options) || typeof requestId !== 'string' || requestId.length > 128) return { success: false, error: 'INVALID_RENDER_QUERY' };
+                    const durationMs = options.durationMs === undefined ? 200 : options.durationMs;
+                    const limit = options.limit === undefined ? 32 : options.limit;
+                    if (!Number.isInteger(durationMs) || durationMs < 50 || durationMs > 1000 || !Number.isInteger(limit) || limit < 1 || limit > 64) return { success: false, error: 'INVALID_RENDER_QUERY' };
+                    this._pruneCancelled();
+                    if (this._cancelledCaptures.has(requestId)) return { success: false, error: 'RENDER_CAPTURE_CANCELLED', verified: false };
+                    if (this._capturePending) return { success: false, error: 'RENDER_CAPTURE_BUSY' };
+                    const wasActive = this._isActive;
+                    const sinceSequence = this._breakSequence;
+                    const sinceFrame = this._frameSequence;
+                    let timer;
+                    let captureEpoch;
+                    let cancelled = false;
+                    try {
+                        const waiting = new Promise(resolve => {
+                            timer = setTimeout(resolve, durationMs);
+                            this._capturePending = { requestId, cancel: () => { cancelled = true; clearTimeout(timer); resolve(); } };
+                        });
+                        if (!wasActive) this.injectHooks(true);
+                        captureEpoch = this._hookEpoch;
+                        if (!this._isActive) return { success: false, available: false, error: 'RENDER_CAPTURE_UNAVAILABLE' };
+                        await waiting;
+                        if (cancelled) return { success: false, error: 'RENDER_CAPTURE_CANCELLED', verified: false };
+                        if (!this._isActive || this._hookEpoch !== captureEpoch) return { success: false, error: 'RENDER_CAPTURE_INTERRUPTED', verified: false };
+                        const result = this.getSummary({ limit, sinceSequence });
+                        if (result.success && !result.available) return { success: false, error: 'RENDER_CAPTURE_INTERRUPTED', verified: false };
+                        result.durationMs = durationMs;
+                        result.framesObserved = this._frameSequence - sinceFrame;
+                        if (!result.framesObserved) result.frame = null;
+                        if (result.success && result.available) result.restoredActive = wasActive || this._uiRequestedActive;
+                        return result;
+                    } catch (_) { return { success: false, error: 'RENDER_CAPTURE_FAILED', verified: false }; }
+                    finally {
+                        clearTimeout(timer);
+                        this._capturePending = null;
+                        if (!wasActive && (captureEpoch === undefined || this._hookEpoch === captureEpoch) && !this._uiRequestedActive) this.restoreHooks();
+                    }
+                },
+                cancelCapture: function (requestId) {
+                    if (typeof requestId !== 'string' || !requestId || requestId.length > 128) return false;
+                    this._cancelledCaptures.set(requestId, Date.now() + 6000);
+                    this._pruneCancelled();
+                    if (!this._capturePending || this._capturePending.requestId !== requestId) return false;
+                    this._capturePending.cancel();
+                    return true;
+                },
                 _originBatcherAddQuad: null,
                 _originPushRenderCommand: null,
                 _lastPushedNodeName: "Unknown Node",
                 _lastQuadInfo: null,
+                _lastBatchNodes: new WeakMap(),
 
                 // --- Frame Snapshot Data ---
                 _frames: [],
@@ -40,23 +143,23 @@ export function initRenderDebugger() {
                     }
                 },
 
-                injectHooks: function () {
+                injectHooks: function (scopedCapture = false) {
                     const self = this;
+                    if (!scopedCapture) self._uiRequestedActive = true;
                     if (self._isActive) return;
+                    self._breaks = [];
+                    self._lastBatchNodes = new WeakMap();
+                    self._hookEpoch++;
 
-                    let eng: any = null;
-                    try {
-                        const frm = document.getElementById('GameDiv') as HTMLIFrameElement;
-                        if (frm && frm.contentWindow && (frm.contentWindow as any).cc) {
-                            eng = (frm.contentWindow as any).cc;
-                        }
-                    } catch (e) { }
-                    if (!eng) eng = window.cc;
+                    const eng = getCcEngine();
 
                     if (!eng || !eng.RenderComponent) {
                         Logger.warn("[RenderDebugger] 初始化失败：未找到 cc.RenderComponent");
                         return;
                     }
+
+                    self._engine = eng;
+                    self._scene = eng.director && eng.director.getScene();
 
                     // Cocos 2.4 引擎真实拼写错误：_checkBacth 而非 _checkBatch
                     const methodName = typeof eng.RenderComponent.prototype._checkBacth === 'function' ? '_checkBacth' : '_checkBatch';
@@ -70,7 +173,7 @@ export function initRenderDebugger() {
                         self._originCheckBatch = eng.RenderComponent.prototype[methodName];
                     }
 
-                    eng.RenderComponent.prototype[methodName] = function (batcher: any, cullingMask: number) {
+                    self._patch(eng.RenderComponent.prototype, methodName, function (batcher: any, cullingMask: number) {
                         if (self._isActive && batcher) {
                             try {
                                 const newMaterial = this._materials && this._materials.length > 0 ? this._materials[0] : null;
@@ -79,7 +182,11 @@ export function initRenderDebugger() {
                                     const oldHash = batcher.material.getHash();
 
                                     if (newHash !== oldHash || batcher.cullingMask !== cullingMask) {
-                                        if (batcher.material.name !== 'default-material' && batcher.node && batcher.node !== batcher._dummyNode) {
+                                        // Standard 2D batches use _dummyNode; retain the actual preceding component.
+                                        const previous = self._lastBatchNodes.get(batcher);
+                                        const victimNode = batcher.node && batcher.node !== batcher._dummyNode ? batcher.node
+                                            : previous && previous.material === batcher.material ? previous.node : null;
+                                        if (batcher.material.name !== 'default-material' && victimNode) {
                                             const diffs = [];
                                             if (newMaterial.name !== batcher.material.name) {
                                                 diffs.push(`材质实例不同 [${batcher.material.name} -> ${newMaterial.name}]`);
@@ -91,7 +198,6 @@ export function initRenderDebugger() {
                                             }
 
                                             const culpritNode = this.node;
-                                            const victimNode = batcher.node;
 
                                             const culpritName = culpritNode ? culpritNode.name : 'Unknown';
                                             const victimName = victimNode ? victimNode.name : 'Unknown';
@@ -113,6 +219,10 @@ export function initRenderDebugger() {
                                                 }
                                             };
 
+                                            self._breaks.push({ ...payload.data, sequence: ++self._breakSequence,
+                                                frameId: self._currentFrame ? self._currentFrame.frameId : (eng.director.getTotalFrames ? eng.director.getTotalFrames() : null) });
+                                            if (self._breaks.length > 128) self._breaks.shift();
+
                                             // [真正静默模式]：寻找宿主 IPC 专线投递避免污染 Console
                                             if (window.__mcpInspector && window.__mcpInspector.sendRenderDebuggerPayload) {
                                                 window.__mcpInspector.sendRenderDebuggerPayload(payload);
@@ -126,12 +236,13 @@ export function initRenderDebugger() {
 
                         }
                         const ret = self._originCheckBatch.call(this, batcher, cullingMask);
+                        if (batcher) self._lastBatchNodes.set(batcher, { node: this.node, material: batcher.material });
 
                         // [Phase 4] 收集参与当前正在合批的渲染指令参数
                         if (self._isActive && self._isCaptureEnabled && self._currentFrame) {
 
                             if (batcher && !batcher.__mcp_execute_hooked) {
-                                batcher.__mcp_execute_hooked = true;
+                                self._patch(batcher, '__mcp_execute_hooked', true);
                                 const hookMethod = function (origFunc) {
                                     if (!origFunc) return origFunc;
                                     return function () {
@@ -152,8 +263,8 @@ export function initRenderDebugger() {
                                         return ret;
                                     };
                                 };
-                                if (batcher.execute) batcher.execute = hookMethod(batcher.execute);
-                                if (batcher.flush) batcher.flush = hookMethod(batcher.flush);
+                                if (batcher.execute) self._patch(batcher, 'execute', hookMethod(batcher.execute));
+                                if (batcher.flush) self._patch(batcher, 'flush', hookMethod(batcher.flush));
                             }
 
                             let mat = this._materials && this._materials.length > 0 ? this._materials[0] : null;
@@ -169,9 +280,9 @@ export function initRenderDebugger() {
                             // 只要底层执行了上传派发缓存区，我们就严格闭合当前的组件槽并开启下一个插槽
                             ['flush', '_flush', '_flushIA', '_flushMaterial'].forEach(fn => {
                                 if (typeof batcher[fn] === 'function' && !batcher['__mcp_' + fn + '_hooked']) {
-                                    batcher['__mcp_' + fn + '_hooked'] = true;
+                                    self._patch(batcher, '__mcp_' + fn + '_hooked', true);
                                     let oldFn = batcher[fn];
-                                    batcher[fn] = function () {
+                                    self._patch(batcher, fn, function () {
                                         if (self._isActive && self._isCaptureEnabled && self._currentFrame) {
                                             // Guard 验证：防止嵌套 flush 导致越级空包
                                             if (self._tempBatchesData[self._currentMcpBatchIndex] && self._tempBatchesData[self._currentMcpBatchIndex].length > 0) {
@@ -180,7 +291,7 @@ export function initRenderDebugger() {
                                             }
                                         }
                                         return oldFn.apply(this, arguments);
-                                    };
+                                    });
                                 }
                             });
 
@@ -204,12 +315,13 @@ export function initRenderDebugger() {
                             });
                         }
                         return ret;
-                    };
+                    });
 
                     // --- 1. mainLoop 钩子 (帧起始/结束) ---
                     if (!self._originMainLoop && eng.Director && eng.Director.prototype.mainLoop) {
                         self._originMainLoop = eng.Director.prototype.mainLoop;
-                        eng.Director.prototype.mainLoop = function (dt: number) {
+                        self._patch(eng.Director.prototype, 'mainLoop', function (dt: number) {
+                            self._lastBatchNodes = new WeakMap();
                             self._currentReplayDrawCallCount = 0; // 起始重置计数
 
                             if (self._isActive && self._isCaptureEnabled) {
@@ -250,6 +362,7 @@ export function initRenderDebugger() {
                             }
 
                             if (self._isActive && self._isCaptureEnabled && self._currentFrame) {
+                                self._frameSequence++;
                                 self._frames.push(self._currentFrame);
                                 if (self._frames.length > self._maxFrames) {
                                     self._frames.shift();
@@ -273,7 +386,7 @@ export function initRenderDebugger() {
 
                                 self._currentFrame = null;
                             }
-                        };
+                        });
                     }
 
                     // 废弃对 pushRenderCommand 的旧版本粗粒度拦截（因为我们现在要在 draw 阶段与 checkBacth 中精确挂载 commands）
@@ -292,7 +405,7 @@ export function initRenderDebugger() {
                     if (eng.renderer && eng.renderer._batcher) {
                         if (!self._originBatcherFlush) {
                             self._originBatcherFlush = eng.renderer._batcher.flush;
-                            eng.renderer._batcher.flush = function () {
+                            self._patch(eng.renderer._batcher, 'flush', function () {
                                 let ret;
                                 if (self._isActive && self._isCaptureEnabled && self._currentFrame) {
                                     self._isFlushingBatcher = true;
@@ -307,7 +420,7 @@ export function initRenderDebugger() {
                                     self._tempBatchesData = [];
                                 }
                                 return ret;
-                            };
+                            });
                         }
                     }
 
@@ -316,12 +429,12 @@ export function initRenderDebugger() {
                         if (!self._originForwardDraw) {
                             self._originForwardDraw = eng.renderer._forward.constructor.prototype._draw;
                             if (self._originForwardDraw) {
-                                eng.renderer._forward.constructor.prototype._draw = function (item) {
+                                self._patch(eng.renderer._forward.constructor.prototype, '_draw', function (item) {
                                     self._currentRenderItem = item;
                                     let ret = self._originForwardDraw.apply(this, arguments);
                                     self._currentRenderItem = null;
                                     return ret;
-                                };
+                                });
                             }
                         }
                     }
@@ -329,7 +442,7 @@ export function initRenderDebugger() {
                     if (eng.gfx && eng.gfx.Device) {
                         if (!self._originDeviceDraw) {
                             self._originDeviceDraw = eng.gfx.Device.prototype.draw;
-                            eng.gfx.Device.prototype.draw = function (primitiveType: number, indicesStart: number, indicesCount: number) {
+                            self._patch(eng.gfx.Device.prototype, 'draw', function (primitiveType: number, indicesStart: number, indicesCount: number) {
 
                                 // 处理 CC 2.4 中底层重载调用 draw(start, count) 的边界情况
                                 let realPrimType = 4; // PT_TRIANGLES 默认为 4
@@ -394,7 +507,7 @@ export function initRenderDebugger() {
                                 if (self._originDeviceDraw) {
                                     return self._originDeviceDraw.apply(this, arguments);
                                 }
-                            };
+                            });
                         }
                     }
 
@@ -404,42 +517,21 @@ export function initRenderDebugger() {
 
                 restoreHooks: function () {
                     const self = this;
-                    if (!self._isActive) return;
-
-                    let eng: any = null;
-                    try {
-                        const frm = document.getElementById('GameDiv') as HTMLIFrameElement;
-                        if (frm && frm.contentWindow && (frm.contentWindow as any).cc) {
-                            eng = (frm.contentWindow as any).cc;
-                        }
-                    } catch (e) { }
-
-                    if (!eng) {
-                        eng = window.cc;
-                    }
-
-                    if (eng && eng.RenderComponent && self._originCheckBatch) {
-                        const methodName = typeof eng.RenderComponent.prototype._checkBacth === 'function' ? '_checkBacth' : '_checkBatch';
-                        eng.RenderComponent.prototype[methodName] = self._originCheckBatch;
-                    }
-                    if (self._originMainLoop && eng.Director) {
-                        eng.Director.prototype.mainLoop = self._originMainLoop;
-                        self._originMainLoop = null;
-                    }
-                    if (self._originPushRenderCommand && eng.renderer) {
-                        eng.renderer.pushRenderCommand = self._originPushRenderCommand;
-                        self._originPushRenderCommand = null;
-                    }
-                    if (self._originBatcherFlush && eng.renderer && eng.renderer._batcher) {
-                        eng.renderer._batcher.flush = self._originBatcherFlush;
-                        self._originBatcherFlush = null;
-                    }
-                    if (self._originDeviceDraw && eng.gfx && eng.gfx.Device) {
-                        eng.gfx.Device.prototype.draw = self._originDeviceDraw;
-                        self._originDeviceDraw = null;
-                    }
-
+                    self._uiRequestedActive = false;
+                    self._isActive = false;
+                    // Restore the original engine, even after the active scene/engine changed.
+                    while (self._patches.length) self._patches.pop()();
+                    self._originCheckBatch = null;
+                    self._originMainLoop = null;
+                    self._originPushRenderCommand = null;
+                    self._originBatcherFlush = null;
+                    self._originDeviceDraw = null;
+                    self._originForwardDraw = null;
+                    self._engine = null;
+                    self._scene = null;
+                    self._breaks = [];
                     self._lastQuadInfo = null;
+                    self._lastBatchNodes = new WeakMap();
                     self._frames = [];
                     self._currentFrame = null;
                     self._isActive = false;

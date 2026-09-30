@@ -1,3 +1,6 @@
+import { createDiagnosticSession } from './diagnostic-session';
+import { DIAGNOSTIC_TOOLS } from '../runtime-diagnostic-contract';
+import { invokeComponentMethod } from './component-invocation';
 declare const Editor: any;
 import * as fs from 'fs';
 import * as path from 'path';
@@ -9,6 +12,22 @@ function inputSession(panel: any) {
         () => Editor.Project?.path || '');
     return panel.__mcpInputSession;
 }
+
+function diagnosticSession(panel: any) {
+    if (!panel.__mcpDiagnosticSession) panel.__mcpDiagnosticSession = createDiagnosticSession(
+        () => panel.shadowRoot ? panel.shadowRoot.querySelector('#game-view') : null,
+        () => Editor.Project?.path || '');
+    return panel.__mcpDiagnosticSession;
+}
+const diagnosticMessages: any = {};
+for (const tool of DIAGNOSTIC_TOOLS) diagnosticMessages['mcp-' + tool.name.replace(/_/g, '-')] = async function(this: any, event: any, args: any) {
+    const result = await diagnosticSession(this).run(tool.name, args);
+    if (event.reply) event.reply(null, result);
+};
+diagnosticMessages['mcp-cancel-observation'] = async function(this: any, event: any, args: any) {
+    const result = await diagnosticSession(this).cancel(args);
+    if (event.reply) event.reply(null, result);
+};
 
 const { createApp, ref, reactive, onMounted, watch, computed, nextTick } = require('vue');
 const { NodeTree } = require('./components/NodeTree');
@@ -866,6 +885,7 @@ mcp.log('脚本已加载');
 },
 
     messages: {
+        ...diagnosticMessages,
         async 'mcp-runtime-viewport'(this: any, event: any, args: any) {
             const reply = (ok: boolean) => { if (event.reply) event.reply(null, { ok }); };
             const viewport = this._runtimeViewport;
@@ -967,32 +987,18 @@ mcp.log('脚本已加载');
                 (function(){
                     try {
                         if(!window.__mcpCrawler) return JSON.stringify({ error: 'Crawler not injected' });
-                        var n = window.__mcpCrawler.findNodeByUuid('${args.uuid}');
+                        var n = window.__mcpCrawler.findNodeByUuid(${JSON.stringify(args.uuid)});
                         if(!n) return JSON.stringify({ error: 'NODE_NOT_FOUND', msg: 'Node destroyed or not found' });
-                        return JSON.stringify(window.__mcpCrawler.getNodeDetail('${args.uuid}'));
+                        return JSON.stringify(window.__mcpCrawler.getNodeDetail(${JSON.stringify(args.uuid)}, {includeRuntime: ${args.includeRuntime === true}}));
                     } catch(e) { return JSON.stringify({ error: 'EXECUTION_FAILED', msg: e.message }); }
                 })();
             `;
             wv.executeJavaScript(code).then((r:any) => { if(event.reply) event.reply(null, typeof r === 'string' ? JSON.parse(r) : r); }).catch((e:any) => { if(event.reply) event.reply(null, { error: e.message }); });
         },
-        'mcp-invoke-component-method'(this: any, event: any, args: any) {
-            const wv: any = this.shadowRoot ? this.shadowRoot.querySelector('#game-view') : null;
-            if (!wv) { if (event.reply) event.reply(null, { error: 'No WebView' }); return; }
-            if (typeof wv.isConnected === 'boolean' && !wv.isConnected) { if (event.reply) event.reply(null, { error: 'WebView detached from DOM' }); return; }
-            try { wv.getWebContentsId(); } catch (e) { if (event.reply) event.reply(null, { error: 'WebView not ready' }); return; }
-            const uuid = args && typeof args.uuid === 'string' ? args.uuid : '';
-            const compIndex = args && Number.isInteger(args.compIndex) ? args.compIndex : -1;
-            const methodName = args && typeof args.methodName === 'string' ? args.methodName : '';
-            const code = `
-                (function(){
-                    try {
-                        if(!window.__mcpCrawler || typeof window.__mcpCrawler.executeComponentMethod !== 'function') return JSON.stringify({ error: 'Crawler method not injected' });
-                        var ok = window.__mcpCrawler.executeComponentMethod(${JSON.stringify(uuid)}, ${compIndex}, ${JSON.stringify(methodName)});
-                        return JSON.stringify({ success: ok });
-                    } catch(e) { return JSON.stringify({ error: 'EXECUTION_FAILED', msg: e.message }); }
-                })();
-            `;
-            wv.executeJavaScript(code).then((r:any) => { if(event.reply) event.reply(null, typeof r === 'string' ? JSON.parse(r) : r); }).catch((e:any) => { if(event.reply) event.reply(null, { error: e.message }); });
+        async 'mcp-invoke-component-method'(this: any, event: any, args: any) {
+            const result = await invokeComponentMethod(
+                () => this.shadowRoot ? this.shadowRoot.querySelector('#game-view') : null, args);
+            if (event.reply) event.reply(null, result);
         },
         'mcp-update-property'(this: any, event: any, args: any) {
             const wv: any = this.shadowRoot ? this.shadowRoot.querySelector('#game-view') : null;
@@ -1221,6 +1227,7 @@ mcp.log('脚本已加载');
     },
 
     close() {
+        if (this.__mcpDiagnosticSession) this.__mcpDiagnosticSession.close();
         if (this.__mcpInputSession) this.__mcpInputSession.close();
         if (this._releaseRuntimeViewport) this._releaseRuntimeViewport();
         this._runtimeViewport = null;
