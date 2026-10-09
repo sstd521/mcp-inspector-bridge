@@ -67,6 +67,11 @@ module.exports = Editor.Panel.extend({
     },
 
     ready() {
+        // panel.title names the tab; only rename detached windows.
+        if (Editor.remote && Editor.remote.Panel) {
+            const hostWindow = Editor.remote.Panel.findWindow(this.id);
+            if (hostWindow && hostWindow.isMainWindow === false) hostWindow.nativeWin.setTitle('mcp-inspctor');
+        }
         const panel = this;
         const panelAppElement = this.$app;
         if (!panelAppElement) return;
